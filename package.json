@@ -1,0 +1,27 @@
+{
+  "name": "alyabot",
+  "version": "1.0.0",
+  "description": "Telegram bot AI companion Alya from anime",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "keywords": ["telegram", "bot", "ai", "gemini", "anime"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "telegraf": "^4.15.6",
+    "@google/generative-ai": "^0.2.1",
+    "dotenv": "^16.3.1",
+    "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/sqlite3": "^3.1.11",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2"
+  }
+}
