@@ -196,12 +196,10 @@ bot.command('settings', async (ctx) => {
 
     const status = settings.isActive ? '✅ Активен' : '❌ Неактивен';
     const mentionMode = settings.mentionMode ? '✅ Включен' : '❌ Выключен';
-    const adminOnly = settings.adminOnly ? '✅ Только админы' : '❌ Все пользователи';
 
     await ctx.reply(`⚙️ Настройки группы:\n\n` +
       `Статус: ${status}\n` +
-      `Режим упоминаний: ${mentionMode}\n` +
-      `Очистка памяти Али: ${adminOnly}`);
+      `Режим упоминаний: ${mentionMode}\n`);
   } catch (error) {
     console.error('Ошибка при получении настроек:', error);
     await ctx.reply('Не могу получить настройки 😅');
