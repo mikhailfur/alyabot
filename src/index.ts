@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 import { config, validateConfig } from './config';
 import { database } from './database';
 import { memoryManager } from './memory';
-import { alyaPrompt } from './prompt';
+import { alyaPromptPrivate, alyaPromptGroup } from './prompt';
 
 dotenv.config();
 validateConfig();
@@ -222,7 +222,8 @@ bot.on('text', async (ctx) => {
     const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
     const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
     
-    const fullPrompt = `${alyaPrompt}\n\n${contextWithHistory}\n\nАля:`;
+    const selectedPrompt = isGroup ? alyaPromptGroup : alyaPromptPrivate;
+    const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
     
     const result = await model.generateContent(fullPrompt);
     const response = await result.response;
