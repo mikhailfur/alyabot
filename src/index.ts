@@ -34,7 +34,7 @@ bot.help((ctx) => {
   const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
   
   if (isGroup) {
-    ctx.reply('Привет! Я Аля 😊\n\nКоманды для групп:\n/activate - Активировать бота в группе\n/deactivate - Деактивировать бота\n/settings - Настройки группы\n\nВ группах отвечаю только когда меня упоминают @alyabot или когда бот активирован!');
+    ctx.reply('Привет! Я Аля 😊\n\nКоманды для групп:\n/activate - Активировать бота в группе\n/deactivate - Деактивировать бота\n/settings - Настройки группы\n\nВ группах отвечаю когда:\n• Меня упоминают @youralyasanbot\n• Бот активирован в группе\n• Отвечаете на мои сообщения');
   } else {
     ctx.reply('Просто напиши мне что-нибудь, и я отвечу! Я люблю общаться 😘\n\nДоступные команды:\n/start - Начать общение\n/help - Показать помощь\n/memory - Показать статистику общения\n/clear - Очистить историю общения');
   }
@@ -197,11 +197,16 @@ bot.on('text', async (ctx) => {
       const isActive = settings?.isActive || false;
       const mentionMode = settings?.mentionMode !== false;
       
-      const botMentioned = userMessage.includes('@alyabot') || userMessage.includes('@AlyaBot');
+      const botMentioned = userMessage.includes('@youralyasanbot') || userMessage.includes('@youralyasanbot');
+      
+      // Проверяем, является ли сообщение ответом на сообщение бота
+      const isReplyToBot = ctx.message.reply_to_message?.from?.id === ctx.botInfo?.id;
       
       if (isActive && !mentionMode) {
         shouldRespond = true;
       } else if (mentionMode && botMentioned) {
+        shouldRespond = true;
+      } else if (isReplyToBot) {
         shouldRespond = true;
       }
     } else {
