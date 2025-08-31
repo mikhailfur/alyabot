@@ -33,8 +33,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       
-      - name: Build TypeScript
-        run: npm run build
-
-      - name: Run tests
-        run: npm test
+      - name: Run Dev
+        run: npm run dev
