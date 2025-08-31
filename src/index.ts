@@ -34,7 +34,7 @@ bot.help((ctx) => {
   const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
   
   if (isGroup) {
-    ctx.reply('Привет! Я Аля 😊\n\nКоманды для групп:\n/activate - Активировать бота в группе\n/deactivate - Деактивировать бота\n/settings - Настройки группы\n\nВ группах отвечаю когда:\n• Меня упоминают @youralyasanbot\n• Бот активирован в группе\n• Отвечаете на мои сообщения');
+    ctx.reply('Привет! Я Аля 😊\n\nКоманды для групп:\n/activate - Активировать бота (только админы)\n/deactivate - Деактивировать бота (только админы)\n/settings - Настройки группы\n/memory - Статистика группы\n/clear - Очистить историю группы (только админы)\n\nВ группах отвечаю когда:\n• Меня упоминают @youralyasanbot\n• Бот активирован в группе\n• Отвечаете на мои сообщения');
   } else {
     ctx.reply('Просто напиши мне что-нибудь, и я отвечу! Я люблю общаться 😘\n\nДоступные команды:\n/start - Начать общение\n/help - Показать помощь\n/memory - Показать статистику общения\n/clear - Очистить историю общения');
   }
@@ -43,20 +43,35 @@ bot.help((ctx) => {
 bot.command('memory', async (ctx) => {
   try {
     const userId = ctx.from?.id;
-    if (!userId) {
-      await ctx.reply('Не могу определить пользователя 😅');
+    const chatId = ctx.chat?.id;
+    
+    if (!userId || !chatId) {
+      await ctx.reply('Не могу определить пользователя или чат 😅');
       return;
     }
 
     await ctx.sendChatAction('typing');
 
-    const stats = await database.getUserStats(userId);
-    const message = `📊 Статистика нашего общения:\n\n` +
-      `💬 Всего сообщений: ${stats.totalMessages}\n` +
-      `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
-      `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
     
-    await ctx.reply(message);
+    if (isGroup) {
+      const stats = await database.getGroupStats(chatId);
+      const message = `📊 Статистика группы:\n\n` +
+        `💬 Всего сообщений: ${stats.totalMessages}\n` +
+        `👥 Участников: ${stats.uniqueUsers}\n` +
+        `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
+        `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
+      
+      await ctx.reply(message);
+    } else {
+      const stats = await database.getUserStats(userId);
+      const message = `📊 Статистика нашего общения:\n\n` +
+        `💬 Всего сообщений: ${stats.totalMessages}\n` +
+        `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
+        `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
+      
+      await ctx.reply(message);
+    }
   } catch (error) {
     console.error('Ошибка при получении статистики:', error);
     await ctx.reply('Не могу получить статистику 😅');
@@ -66,15 +81,32 @@ bot.command('memory', async (ctx) => {
 bot.command('clear', async (ctx) => {
   try {
     const userId = ctx.from?.id;
-    if (!userId) {
-      await ctx.reply('Не могу определить пользователя 😅');
+    const chatId = ctx.chat?.id;
+    
+    if (!userId || !chatId) {
+      await ctx.reply('Не могу определить пользователя или чат 😅');
       return;
+    }
+
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    
+    if (isGroup) {
+      const isAdmin = await checkAdminStatus(ctx);
+      if (!isAdmin) {
+        await ctx.reply('Только администраторы могут очищать историю в группах!');
+        return;
+      }
     }
 
     await ctx.sendChatAction('typing');
 
-    await database.clearUserHistory(userId);
-    await ctx.reply('История общения очищена! Начнем с чистого листа 😊');
+    if (isGroup) {
+      await database.clearGroupHistory(chatId);
+      await ctx.reply('История общения группы очищена! Начнем с чистого листа 😊');
+    } else {
+      await database.clearUserHistory(userId);
+      await ctx.reply('История общения очищена! Начнем с чистого листа 😊');
+    }
   } catch (error) {
     console.error('Ошибка при очистке истории:', error);
     await ctx.reply('Не могу очистить историю 😅');
@@ -169,7 +201,7 @@ bot.command('settings', async (ctx) => {
     await ctx.reply(`⚙️ Настройки группы:\n\n` +
       `Статус: ${status}\n` +
       `Режим упоминаний: ${mentionMode}\n` +
-      `Доступ: ${adminOnly}`);
+      `Очистка памяти Али: ${adminOnly}`);
   } catch (error) {
     console.error('Ошибка при получении настроек:', error);
     await ctx.reply('Не могу получить настройки 😅');

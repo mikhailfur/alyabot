@@ -119,9 +119,34 @@ class Database {
     };
   }
 
+  async getGroupStats(chatId: number): Promise<{ totalMessages: number; uniqueUsers: number; firstMessage?: number; lastMessage?: number }> {
+    const sql = `
+      SELECT 
+        COUNT(*) as totalMessages,
+        COUNT(DISTINCT user_id) as uniqueUsers,
+        MIN(timestamp) as firstMessage,
+        MAX(timestamp) as lastMessage
+      FROM chat_history 
+      WHERE chat_id = ?
+    `;
+    
+    const result = await this.get(sql, [chatId]);
+    return {
+      totalMessages: result.totalMessages || 0,
+      uniqueUsers: result.uniqueUsers || 0,
+      firstMessage: result.firstMessage,
+      lastMessage: result.lastMessage
+    };
+  }
+
   async clearUserHistory(userId: number): Promise<void> {
     const sql = 'DELETE FROM chat_history WHERE user_id = ?';
     await this.run(sql, [userId]);
+  }
+
+  async clearGroupHistory(chatId: number): Promise<void> {
+    const sql = 'DELETE FROM chat_history WHERE chat_id = ?';
+    await this.run(sql, [chatId]);
   }
 
   async setGroupSettings(chatId: number, isActive: boolean, mentionMode: boolean = true, adminOnly: boolean = false): Promise<void> {
