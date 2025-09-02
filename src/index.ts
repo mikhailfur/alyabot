@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 import { config, validateConfig } from './config';
 import { database } from './database';
 import { memoryManager } from './memory';
-import { alyaPrompt } from './prompt';
+import { alyaPromptPrivate, alyaPromptGroup } from './prompt';
 
 dotenv.config();
 validateConfig();
@@ -14,31 +14,64 @@ const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
+async function checkAdminStatus(ctx: any): Promise<boolean> {
+  try {
+    if (!ctx.from?.id || !ctx.chat?.id) return false;
+    
+    const chatMember = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+    return chatMember.status === 'administrator' || chatMember.status === 'creator';
+  } catch (error) {
+    console.error('Ошибка при проверке статуса администратора:', error);
+    return false;
+  }
+}
+
 bot.start((ctx) => {
   ctx.reply('Привет! Я Аля 😊 Рада познакомиться! Как дела?');
 });
 
 bot.help((ctx) => {
-  ctx.reply('Просто напиши мне что-нибудь, и я отвечу! Я люблю общаться 😘\n\nДоступные команды:\n/start - Начать общение\n/help - Показать помощь\n/memory - Показать статистику общения\n/clear - Очистить историю общения');
+  const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+  
+  if (isGroup) {
+    ctx.reply('Привет! Я Аля 😊\n\nКоманды для групп:\n/activate - Активировать бота (только админы)\n/deactivate - Деактивировать бота (только админы)\n/settings - Настройки группы\n/memory - Статистика группы\n/clear - Очистить историю группы (только админы)\n\nВ группах отвечаю когда:\n• Меня упоминают @youralyasanbot\n• Бот активирован в группе\n• Отвечаете на мои сообщения');
+  } else {
+    ctx.reply('Просто напиши мне что-нибудь, и я отвечу! Я люблю общаться 😘\n\nДоступные команды:\n/start - Начать общение\n/help - Показать помощь\n/memory - Показать статистику общения\n/clear - Очистить историю общения');
+  }
 });
 
 bot.command('memory', async (ctx) => {
   try {
     const userId = ctx.from?.id;
-    if (!userId) {
-      await ctx.reply('Не могу определить пользователя 😅');
+    const chatId = ctx.chat?.id;
+    
+    if (!userId || !chatId) {
+      await ctx.reply('Не могу определить пользователя или чат 😅');
       return;
     }
 
     await ctx.sendChatAction('typing');
 
-    const stats = await database.getUserStats(userId);
-    const message = `📊 Статистика нашего общения:\n\n` +
-      `💬 Всего сообщений: ${stats.totalMessages}\n` +
-      `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
-      `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
     
-    await ctx.reply(message);
+    if (isGroup) {
+      const stats = await database.getGroupStats(chatId);
+      const message = `📊 Статистика группы:\n\n` +
+        `💬 Всего сообщений: ${stats.totalMessages}\n` +
+        `👥 Участников: ${stats.uniqueUsers}\n` +
+        `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
+        `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
+      
+      await ctx.reply(message);
+    } else {
+      const stats = await database.getUserStats(userId);
+      const message = `📊 Статистика нашего общения:\n\n` +
+        `💬 Всего сообщений: ${stats.totalMessages}\n` +
+        `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
+        `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
+      
+      await ctx.reply(message);
+    }
   } catch (error) {
     console.error('Ошибка при получении статистики:', error);
     await ctx.reply('Не могу получить статистику 😅');
@@ -48,18 +81,128 @@ bot.command('memory', async (ctx) => {
 bot.command('clear', async (ctx) => {
   try {
     const userId = ctx.from?.id;
-    if (!userId) {
-      await ctx.reply('Не могу определить пользователя 😅');
+    const chatId = ctx.chat?.id;
+    
+    if (!userId || !chatId) {
+      await ctx.reply('Не могу определить пользователя или чат 😅');
       return;
+    }
+
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    
+    if (isGroup) {
+      const isAdmin = await checkAdminStatus(ctx);
+      if (!isAdmin) {
+        await ctx.reply('Только администраторы могут очищать историю в группах!');
+        return;
+      }
     }
 
     await ctx.sendChatAction('typing');
 
-    await database.clearUserHistory(userId);
-    await ctx.reply('История общения очищена! Начнем с чистого листа 😊');
+    if (isGroup) {
+      await database.clearGroupHistory(chatId);
+      await ctx.reply('История общения группы очищена! Начнем с чистого листа 😊');
+    } else {
+      await database.clearUserHistory(userId);
+      await ctx.reply('История общения очищена! Начнем с чистого листа 😊');
+    }
   } catch (error) {
     console.error('Ошибка при очистке истории:', error);
     await ctx.reply('Не могу очистить историю 😅');
+  }
+});
+
+bot.command('activate', async (ctx) => {
+  try {
+    const chatId = ctx.chat?.id;
+    const userId = ctx.from?.id;
+    
+    if (!chatId || !userId) {
+      await ctx.reply('Не могу определить чат или пользователя 😅');
+      return;
+    }
+
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    if (!isGroup) {
+      await ctx.reply('Эта команда работает только в группах!');
+      return;
+    }
+
+    const isAdmin = await checkAdminStatus(ctx);
+    if (!isAdmin) {
+      await ctx.reply('Только администраторы могут активировать бота!');
+      return;
+    }
+
+    await database.setGroupSettings(chatId, true, true, false);
+    await ctx.reply('✅ Бот Аля активирован в группе! Теперь я буду отвечать на сообщения 😊');
+  } catch (error) {
+    console.error('Ошибка при активации:', error);
+    await ctx.reply('Не могу активировать бота 😅');
+  }
+});
+
+bot.command('deactivate', async (ctx) => {
+  try {
+    const chatId = ctx.chat?.id;
+    const userId = ctx.from?.id;
+    
+    if (!chatId || !userId) {
+      await ctx.reply('Не могу определить чат или пользователя 😅');
+      return;
+    }
+
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    if (!isGroup) {
+      await ctx.reply('Эта команда работает только в группах!');
+      return;
+    }
+
+    const isAdmin = await checkAdminStatus(ctx);
+    if (!isAdmin) {
+      await ctx.reply('Только администраторы могут деактивировать бота!');
+      return;
+    }
+
+    await database.setGroupSettings(chatId, false, true, false);
+    await ctx.reply('❌ Бот Аля деактивирован в группе. Теперь отвечаю только на упоминания.');
+  } catch (error) {
+    console.error('Ошибка при деактивации:', error);
+    await ctx.reply('Не могу деактивировать бота 😅');
+  }
+});
+
+bot.command('settings', async (ctx) => {
+  try {
+    const chatId = ctx.chat?.id;
+    
+    if (!chatId) {
+      await ctx.reply('Не могу определить чат 😅');
+      return;
+    }
+
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    if (!isGroup) {
+      await ctx.reply('Эта команда работает только в группах!');
+      return;
+    }
+
+    const settings = await database.getGroupSettings(chatId);
+    if (!settings) {
+      await ctx.reply('Группа не настроена. Используйте /activate для активации бота.');
+      return;
+    }
+
+    const status = settings.isActive ? '✅ Активен' : '❌ Неактивен';
+    const mentionMode = settings.mentionMode ? '✅ Включен' : '❌ Выключен';
+
+    await ctx.reply(`⚙️ Настройки группы:\n\n` +
+      `Статус: ${status}\n` +
+      `Режим упоминаний: ${mentionMode}\n`);
+  } catch (error) {
+    console.error('Ошибка при получении настроек:', error);
+    await ctx.reply('Не могу получить настройки 😅');
   }
 });
 
@@ -68,18 +211,49 @@ bot.on('text', async (ctx) => {
     const userMessage = ctx.message.text;
     const userId = ctx.from?.id;
     const username = ctx.from?.username || ctx.from?.first_name;
+    const chatId = ctx.chat?.id;
+    const chatType = ctx.chat?.type;
     
-    if (!userId) {
-      await ctx.reply('Не могу определить пользователя 😅');
+    if (!userId || !chatId) {
+      await ctx.reply('Не могу определить пользователя или чат 😅');
+      return;
+    }
+
+    const isGroup = chatType === 'group' || chatType === 'supergroup';
+    let shouldRespond = false;
+
+    if (isGroup) {
+      const settings = await database.getGroupSettings(chatId);
+      const isActive = settings?.isActive || false;
+      const mentionMode = settings?.mentionMode !== false;
+      
+      const botMentioned = userMessage.includes('@youralyasanbot') || userMessage.includes('@youralyasanbot');
+      
+      // Проверяем, является ли сообщение ответом на сообщение бота
+      const isReplyToBot = ctx.message.reply_to_message?.from?.id === ctx.botInfo?.id;
+      
+      if (isActive && !mentionMode) {
+        shouldRespond = true;
+      } else if (mentionMode && botMentioned) {
+        shouldRespond = true;
+      } else if (isReplyToBot) {
+        shouldRespond = true;
+      }
+    } else {
+      shouldRespond = true;
+    }
+
+    if (!shouldRespond) {
       return;
     }
 
     await ctx.sendChatAction('typing');
 
-    const chatHistory = await database.getChatHistory(userId, 10);
+    const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
     const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
     
-    const fullPrompt = `${alyaPrompt}\n\n${contextWithHistory}\n\nАля:`;
+    const selectedPrompt = isGroup ? alyaPromptGroup : alyaPromptPrivate;
+    const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
     
     const result = await model.generateContent(fullPrompt);
     const response = await result.response;
@@ -87,7 +261,7 @@ bot.on('text', async (ctx) => {
     
     await ctx.reply(text);
     
-    await database.saveMessage(userId, username, userMessage, text);
+    await database.saveMessage(userId, username, userMessage, text, chatId, chatType);
     
   } catch (error) {
     console.error('Ошибка при генерации ответа:', error);
