@@ -125,7 +125,15 @@ class Database {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
       
-      await this.pool.execute(sql, [userId, username || null, message.substring(0, 10000), response.substring(0, 10000), timestamp, chatId || null, chatType || null]);
+      await this.pool.execute(sql, [
+        userId,
+        username || null,
+        message.substring(0, 10000),
+        response.substring(0, 10000),
+        timestamp,
+        chatId || null,
+        chatType || null
+      ]);
     } catch (error) {
       console.error('Ошибка при сохранении сообщения:', error);
       throw error;
@@ -141,24 +149,26 @@ class Database {
       let sql: string;
       let params: any[];
       
+      const safeLimit = parseInt(String(limit), 10);
+      
       if (chatId) {
         sql = `
           SELECT id, user_id as userId, username, message, response, timestamp, chat_id as chatId, chat_type as chatType
           FROM chat_history 
           WHERE user_id = ? AND chat_id = ?
           ORDER BY timestamp DESC 
-          LIMIT ?
+          LIMIT ${safeLimit}
         `;
-        params = [userId, chatId, limit];
+        params = [userId, chatId];
       } else {
         sql = `
           SELECT id, user_id as userId, username, message, response, timestamp, chat_id as chatId, chat_type as chatType
           FROM chat_history 
           WHERE user_id = ? 
           ORDER BY timestamp DESC 
-          LIMIT ?
+          LIMIT ${safeLimit}
         `;
-        params = [userId, limit];
+        params = [userId];
       }
       
       const [rows] = await this.pool.execute(sql, params);
@@ -309,23 +319,36 @@ class Database {
 
   async createOrUpdateUser(userId: number, username?: string, firstName?: string, lastName?: string): Promise<void> {
     const timestamp = Date.now();
-    const sql = `
-      INSERT INTO users (user_id, username, first_name, last_name, created_at, last_active, is_premium, subscription_until, behavior_mode, model_type, total_messages, trial_used)
-      VALUES (?, ?, ?, ?, ?, ?, 
-        COALESCE((SELECT is_premium FROM users WHERE user_id = ?), 0),
-        COALESCE((SELECT subscription_until FROM users WHERE user_id = ?), NULL),
-        COALESCE((SELECT behavior_mode FROM users WHERE user_id = ?), 'default'),
-        COALESCE((SELECT model_type FROM users WHERE user_id = ?), NULL),
-        COALESCE((SELECT total_messages FROM users WHERE user_id = ?), 0),
-        COALESCE((SELECT trial_used FROM users WHERE user_id = ?), 0)
-      )
-      ON DUPLICATE KEY UPDATE
-        username = VALUES(username),
-        first_name = VALUES(first_name),
-        last_name = VALUES(last_name),
-        last_active = VALUES(last_active)
-    `;
-    await this.pool.execute(sql, [userId, username, firstName, lastName, timestamp, timestamp, userId, userId, userId, userId, userId, userId]);
+    
+    const existingUser = await this.getUser(userId);
+    
+    if (existingUser) {
+      const sql = `
+        UPDATE users 
+        SET username = ?, first_name = ?, last_name = ?, last_active = ?
+        WHERE user_id = ?
+      `;
+      await this.pool.execute(sql, [
+        username || null,
+        firstName || null,
+        lastName || null,
+        timestamp,
+        userId
+      ]);
+    } else {
+      const sql = `
+        INSERT INTO users (user_id, username, first_name, last_name, created_at, last_active, is_premium, subscription_until, behavior_mode, model_type, total_messages, trial_used)
+        VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'default', NULL, 0, 0)
+      `;
+      await this.pool.execute(sql, [
+        userId,
+        username || null,
+        firstName || null,
+        lastName || null,
+        timestamp,
+        timestamp
+      ]);
+    }
   }
 
   async updateUserActivity(userId: number): Promise<void> {
