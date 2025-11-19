@@ -922,15 +922,15 @@ bot.launch();
 
 console.log('Бот Аля запущен! 🤖');
 
-process.once('SIGINT', () => {
+process.once('SIGINT', async () => {
   console.log('Завершение работы бота...');
   subscriptionManager.stopPeriodicCheck();
-  database.close();
+  await database.close();
   bot.stop('SIGINT');
 });
-process.once('SIGTERM', () => {
+process.once('SIGTERM', async () => {
   console.log('Завершение работы бота...');
   subscriptionManager.stopPeriodicCheck();
-  database.close();
+  await database.close();
   bot.stop('SIGTERM');
 });

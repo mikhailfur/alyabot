@@ -1,5 +1,5 @@
-import sqlite3 from 'sqlite3';
-import { promisify } from 'util';
+import mysql from 'mysql2/promise';
+import { config } from './config';
 
 export interface ChatMessage {
   id?: number;
@@ -8,106 +8,107 @@ export interface ChatMessage {
   message: string;
   response: string;
   timestamp: number;
+  chatId?: number;
+  chatType?: string;
 }
 
 class Database {
-  private db: sqlite3.Database;
-  private run: (sql: string, params?: any[]) => Promise<sqlite3.RunResult>;
-  private get: (sql: string, params?: any[]) => Promise<any>;
-  private all: (sql: string, params?: any[]) => Promise<any[]>;
+  private pool: mysql.Pool;
 
-  constructor(dbPath: string = process.env.DB_PATH || './alyabot.db') {
-    const finalPath = dbPath.startsWith('/') ? dbPath : `${process.cwd()}/${dbPath}`;
-    this.db = new sqlite3.Database(finalPath);
-    this.run = promisify(this.db.run.bind(this.db));
-    this.get = promisify(this.db.get.bind(this.db));
-    this.all = promisify(this.db.all.bind(this.db));
+  constructor() {
+    this.pool = mysql.createPool({
+      host: config.mysqlHost,
+      port: config.mysqlPort,
+      user: config.mysqlUser,
+      password: config.mysqlPassword,
+      database: config.mysqlDatabase,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+    });
     
     this.initDatabase();
   }
 
   private async initDatabase(): Promise<void> {
-    const createTableSQL = `
-      CREATE TABLE IF NOT EXISTS chat_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        username TEXT,
-        message TEXT NOT NULL,
-        response TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        chat_id INTEGER,
-        chat_type TEXT
-      )
-    `;
-    
-    const createGroupsTableSQL = `
-      CREATE TABLE IF NOT EXISTS group_settings (
-        chat_id INTEGER PRIMARY KEY,
-        is_active BOOLEAN DEFAULT 0,
-        mention_mode BOOLEAN DEFAULT 1,
-        admin_only BOOLEAN DEFAULT 0,
-        created_at INTEGER NOT NULL
-      )
-    `;
-    
-    const createUsersTableSQL = `
-      CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        is_premium BOOLEAN DEFAULT 0,
-        subscription_until INTEGER,
-        behavior_mode TEXT DEFAULT 'default',
-        model_type TEXT DEFAULT NULL,
-        created_at INTEGER NOT NULL,
-        last_active INTEGER,
-        total_messages INTEGER DEFAULT 0,
-        trial_used BOOLEAN DEFAULT 0
-      )
-    `;
-    
-    const createSubscriptionsTableSQL = `
-      CREATE TABLE IF NOT EXISTS subscriptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        subscription_type TEXT NOT NULL,
-        started_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        is_active BOOLEAN DEFAULT 1,
-        FOREIGN KEY (user_id) REFERENCES users(user_id)
-      )
-    `;
-    
-    const createIndexSQL = `
-      CREATE INDEX IF NOT EXISTS idx_user_timestamp 
-      ON chat_history(user_id, timestamp)
-    `;
-    
-    const createChatIndexSQL = `
-      CREATE INDEX IF NOT EXISTS idx_chat_timestamp 
-      ON chat_history(chat_id, timestamp)
-    `;
-    
-    const createGlobalSettingsTableSQL = `
-      CREATE TABLE IF NOT EXISTS global_settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `;
-    
-    await this.run(createTableSQL);
-    await this.run(createGroupsTableSQL);
-    await this.run(createUsersTableSQL);
-    await this.run(createSubscriptionsTableSQL);
-    await this.run(createGlobalSettingsTableSQL);
-    await this.run(createIndexSQL);
-    await this.run(createChatIndexSQL);
-    
-    const defaultModel = await this.get('SELECT value FROM global_settings WHERE key = ?', ['default_model']);
-    if (!defaultModel) {
-      await this.run('INSERT INTO global_settings (key, value, updated_at) VALUES (?, ?, ?)', ['default_model', 'auto', Date.now()]);
+    try {
+      const createTableSQL = `
+        CREATE TABLE IF NOT EXISTS chat_history (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          username VARCHAR(255),
+          message TEXT NOT NULL,
+          response TEXT NOT NULL,
+          timestamp BIGINT NOT NULL,
+          chat_id BIGINT,
+          chat_type VARCHAR(50),
+          INDEX idx_user_timestamp (user_id, timestamp),
+          INDEX idx_chat_timestamp (chat_id, timestamp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      const createGroupsTableSQL = `
+        CREATE TABLE IF NOT EXISTS group_settings (
+          chat_id BIGINT PRIMARY KEY,
+          is_active BOOLEAN DEFAULT 0,
+          mention_mode BOOLEAN DEFAULT 1,
+          admin_only BOOLEAN DEFAULT 0,
+          created_at BIGINT NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      const createUsersTableSQL = `
+        CREATE TABLE IF NOT EXISTS users (
+          user_id BIGINT PRIMARY KEY,
+          username VARCHAR(255),
+          first_name VARCHAR(255),
+          last_name VARCHAR(255),
+          is_premium BOOLEAN DEFAULT 0,
+          subscription_until BIGINT,
+          behavior_mode VARCHAR(50) DEFAULT 'default',
+          model_type VARCHAR(50) DEFAULT NULL,
+          created_at BIGINT NOT NULL,
+          last_active BIGINT,
+          total_messages INT DEFAULT 0,
+          trial_used BOOLEAN DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      const createSubscriptionsTableSQL = `
+        CREATE TABLE IF NOT EXISTS subscriptions (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          subscription_type VARCHAR(50) NOT NULL,
+          started_at BIGINT NOT NULL,
+          expires_at BIGINT NOT NULL,
+          is_active BOOLEAN DEFAULT 1,
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+          INDEX idx_user_id (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      const createGlobalSettingsTableSQL = `
+        CREATE TABLE IF NOT EXISTS global_settings (
+          \`key\` VARCHAR(255) PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at BIGINT NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      await this.pool.execute(createTableSQL);
+      await this.pool.execute(createGroupsTableSQL);
+      await this.pool.execute(createUsersTableSQL);
+      await this.pool.execute(createSubscriptionsTableSQL);
+      await this.pool.execute(createGlobalSettingsTableSQL);
+      
+      const [rows] = await this.pool.execute('SELECT value FROM global_settings WHERE `key` = ?', ['default_model']);
+      const result = rows as any[];
+      if (result.length === 0) {
+        await this.pool.execute('INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?)', ['default_model', 'auto', Date.now()]);
+      }
+    } catch (error) {
+      console.error('Ошибка при инициализации базы данных:', error);
+      throw error;
     }
   }
 
@@ -124,7 +125,7 @@ class Database {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
       
-      await this.run(sql, [userId, username || null, message.substring(0, 10000), response.substring(0, 10000), timestamp, chatId || null, chatType || null]);
+      await this.pool.execute(sql, [userId, username || null, message.substring(0, 10000), response.substring(0, 10000), timestamp, chatId || null, chatType || null]);
     } catch (error) {
       console.error('Ошибка при сохранении сообщения:', error);
       throw error;
@@ -142,7 +143,7 @@ class Database {
       
       if (chatId) {
         sql = `
-          SELECT id, user_id, username, message, response, timestamp, chat_id, chat_type
+          SELECT id, user_id as userId, username, message, response, timestamp, chat_id as chatId, chat_type as chatType
           FROM chat_history 
           WHERE user_id = ? AND chat_id = ?
           ORDER BY timestamp DESC 
@@ -151,7 +152,7 @@ class Database {
         params = [userId, chatId, limit];
       } else {
         sql = `
-          SELECT id, user_id, username, message, response, timestamp, chat_id, chat_type
+          SELECT id, user_id as userId, username, message, response, timestamp, chat_id as chatId, chat_type as chatType
           FROM chat_history 
           WHERE user_id = ? 
           ORDER BY timestamp DESC 
@@ -160,7 +161,8 @@ class Database {
         params = [userId, limit];
       }
       
-      const messages = await this.all(sql, params);
+      const [rows] = await this.pool.execute(sql, params);
+      const messages = rows as any[];
       return (messages || []).reverse();
     } catch (error) {
       console.error('Ошибка при получении истории чата:', error);
@@ -178,11 +180,12 @@ class Database {
       WHERE user_id = ?
     `;
     
-    const result = await this.get(sql, [userId]);
+    const [rows] = await this.pool.execute(sql, [userId]);
+    const result = (rows as any[])[0];
     return {
-      totalMessages: result.totalMessages || 0,
-      firstMessage: result.firstMessage,
-      lastMessage: result.lastMessage
+      totalMessages: result?.totalMessages || 0,
+      firstMessage: result?.firstMessage,
+      lastMessage: result?.lastMessage
     };
   }
 
@@ -197,12 +200,13 @@ class Database {
       WHERE chat_id = ?
     `;
     
-    const result = await this.get(sql, [chatId]);
+    const [rows] = await this.pool.execute(sql, [chatId]);
+    const result = (rows as any[])[0];
     return {
-      totalMessages: result.totalMessages || 0,
-      uniqueUsers: result.uniqueUsers || 0,
-      firstMessage: result.firstMessage,
-      lastMessage: result.lastMessage
+      totalMessages: result?.totalMessages || 0,
+      uniqueUsers: result?.uniqueUsers || 0,
+      firstMessage: result?.firstMessage,
+      lastMessage: result?.lastMessage
     };
   }
 
@@ -222,7 +226,7 @@ class Database {
         params = [userId];
       }
       
-      await this.run(sql, params);
+      await this.pool.execute(sql, params);
     } catch (error) {
       console.error('Ошибка при очистке истории пользователя:', error);
       throw error;
@@ -245,7 +249,7 @@ class Database {
         params = [userId, chatId];
       }
       
-      await this.run(sql, params);
+      await this.pool.execute(sql, params);
       console.log(`Очищена история для пользователя ${userId} в чате ${chatId}`);
     } catch (error) {
       console.error('Ошибка при очистке истории чата:', error);
@@ -259,7 +263,7 @@ class Database {
         throw new Error('Chat ID не указан');
       }
       const sql = 'DELETE FROM chat_history WHERE chat_id = ?';
-      await this.run(sql, [chatId]);
+      await this.pool.execute(sql, [chatId]);
     } catch (error) {
       console.error('Ошибка при очистке истории группы:', error);
       throw error;
@@ -269,16 +273,20 @@ class Database {
   async setGroupSettings(chatId: number, isActive: boolean, mentionMode: boolean = true, adminOnly: boolean = false): Promise<void> {
     const timestamp = Date.now();
     const sql = `
-      INSERT OR REPLACE INTO group_settings (chat_id, is_active, mention_mode, admin_only, created_at)
+      INSERT INTO group_settings (chat_id, is_active, mention_mode, admin_only, created_at)
       VALUES (?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        is_active = VALUES(is_active),
+        mention_mode = VALUES(mention_mode),
+        admin_only = VALUES(admin_only)
     `;
     
-    await this.run(sql, [chatId, isActive ? 1 : 0, mentionMode ? 1 : 0, adminOnly ? 1 : 0, timestamp]);
+    await this.pool.execute(sql, [chatId, isActive ? 1 : 0, mentionMode ? 1 : 0, adminOnly ? 1 : 0, timestamp]);
   }
 
   async getGroupSettings(chatId: number): Promise<{ isActive: boolean; mentionMode: boolean; adminOnly: boolean } | null> {
-    const sql = 'SELECT is_active, mention_mode, admin_only FROM group_settings WHERE chat_id = ?';
-    const result = await this.get(sql, [chatId]);
+    const [rows] = await this.pool.execute('SELECT is_active, mention_mode, admin_only FROM group_settings WHERE chat_id = ?', [chatId]);
+    const result = (rows as any[])[0];
     
     if (!result) return null;
     
@@ -295,37 +303,49 @@ class Database {
   }
 
   async getUser(userId: number): Promise<any> {
-    const sql = 'SELECT * FROM users WHERE user_id = ?';
-    return await this.get(sql, [userId]);
+    const [rows] = await this.pool.execute('SELECT * FROM users WHERE user_id = ?', [userId]);
+    return (rows as any[])[0] || null;
   }
 
   async createOrUpdateUser(userId: number, username?: string, firstName?: string, lastName?: string): Promise<void> {
     const timestamp = Date.now();
     const sql = `
-      INSERT OR REPLACE INTO users (user_id, username, first_name, last_name, created_at, last_active)
-      VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM users WHERE user_id = ?), ?), ?)
+      INSERT INTO users (user_id, username, first_name, last_name, created_at, last_active, is_premium, subscription_until, behavior_mode, model_type, total_messages, trial_used)
+      VALUES (?, ?, ?, ?, ?, ?, 
+        COALESCE((SELECT is_premium FROM users WHERE user_id = ?), 0),
+        COALESCE((SELECT subscription_until FROM users WHERE user_id = ?), NULL),
+        COALESCE((SELECT behavior_mode FROM users WHERE user_id = ?), 'default'),
+        COALESCE((SELECT model_type FROM users WHERE user_id = ?), NULL),
+        COALESCE((SELECT total_messages FROM users WHERE user_id = ?), 0),
+        COALESCE((SELECT trial_used FROM users WHERE user_id = ?), 0)
+      )
+      ON DUPLICATE KEY UPDATE
+        username = VALUES(username),
+        first_name = VALUES(first_name),
+        last_name = VALUES(last_name),
+        last_active = VALUES(last_active)
     `;
-    await this.run(sql, [userId, username, firstName, lastName, userId, timestamp, timestamp]);
+    await this.pool.execute(sql, [userId, username, firstName, lastName, timestamp, timestamp, userId, userId, userId, userId, userId, userId]);
   }
 
   async updateUserActivity(userId: number): Promise<void> {
     const sql = 'UPDATE users SET last_active = ?, total_messages = total_messages + 1 WHERE user_id = ?';
-    await this.run(sql, [Date.now(), userId]);
+    await this.pool.execute(sql, [Date.now(), userId]);
   }
 
   async setUserPremium(userId: number, isPremium: boolean, expiresAt?: number): Promise<void> {
     const sql = 'UPDATE users SET is_premium = ?, subscription_until = ? WHERE user_id = ?';
-    await this.run(sql, [isPremium ? 1 : 0, expiresAt || null, userId]);
+    await this.pool.execute(sql, [isPremium ? 1 : 0, expiresAt || null, userId]);
   }
 
   async setUserBehaviorMode(userId: number, mode: string): Promise<void> {
     const sql = 'UPDATE users SET behavior_mode = ? WHERE user_id = ?';
-    await this.run(sql, [mode, userId]);
+    await this.pool.execute(sql, [mode, userId]);
   }
 
   async setUserModelType(userId: number, modelType: string | null): Promise<void> {
     const sql = 'UPDATE users SET model_type = ? WHERE user_id = ?';
-    await this.run(sql, [modelType, userId]);
+    await this.pool.execute(sql, [modelType, userId]);
   }
 
   async getUserModelType(userId: number): Promise<string | null> {
@@ -334,8 +354,8 @@ class Database {
   }
 
   async getAllUsers(): Promise<any[]> {
-    const sql = 'SELECT * FROM users ORDER BY last_active DESC';
-    return await this.all(sql);
+    const [rows] = await this.pool.execute('SELECT * FROM users ORDER BY last_active DESC');
+    return rows as any[];
   }
 
   async getUsersStats(): Promise<any> {
@@ -348,7 +368,8 @@ class Database {
       FROM users
     `;
     const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    return await this.get(sql, [dayAgo]);
+    const [rows] = await this.pool.execute(sql, [dayAgo]);
+    return (rows as any[])[0] || {};
   }
 
   async createSubscription(userId: number, subscriptionType: string, durationMonths: number): Promise<void> {
@@ -358,7 +379,7 @@ class Database {
       INSERT INTO subscriptions (user_id, subscription_type, started_at, expires_at, is_active)
       VALUES (?, ?, ?, ?, 1)
     `;
-    await this.run(sql, [userId, subscriptionType, startedAt, expiresAt]);
+    await this.pool.execute(sql, [userId, subscriptionType, startedAt, expiresAt]);
     await this.setUserPremium(userId, true, expiresAt);
   }
 
@@ -373,13 +394,14 @@ class Database {
   }
 
   async getGlobalSetting(key: string): Promise<string | null> {
-    const result = await this.get('SELECT value FROM global_settings WHERE key = ?', [key]);
+    const [rows] = await this.pool.execute('SELECT value FROM global_settings WHERE `key` = ?', [key]);
+    const result = (rows as any[])[0];
     return result?.value || null;
   }
 
   async setGlobalSetting(key: string, value: string): Promise<void> {
-    await this.run(
-      'INSERT OR REPLACE INTO global_settings (key, value, updated_at) VALUES (?, ?, ?)',
+    await this.pool.execute(
+      'INSERT INTO global_settings (`key`, value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
       [key, value, Date.now()]
     );
   }
@@ -400,7 +422,7 @@ class Database {
 
   async setTrialUsed(userId: number): Promise<void> {
     const sql = 'UPDATE users SET trial_used = 1 WHERE user_id = ?';
-    await this.run(sql, [userId]);
+    await this.pool.execute(sql, [userId]);
   }
 
   async createTrialSubscription(userId: number): Promise<void> {
@@ -410,13 +432,13 @@ class Database {
       INSERT INTO subscriptions (user_id, subscription_type, started_at, expires_at, is_active)
       VALUES (?, ?, ?, ?, 1)
     `;
-    await this.run(sql, [userId, 'trial', startedAt, expiresAt]);
+    await this.pool.execute(sql, [userId, 'trial', startedAt, expiresAt]);
     await this.setUserPremium(userId, true, expiresAt);
     await this.setTrialUsed(userId);
   }
 
-  close(): void {
-    this.db.close();
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }
 

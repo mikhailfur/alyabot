@@ -15,7 +15,31 @@ export interface Config {
   tributePaymentLinkTrial: string;
   adminIds: number[];
   subscriptionCheckInterval: number;
+  mysqlHost: string;
+  mysqlPort: number;
+  mysqlUser: string;
+  mysqlPassword: string;
+  mysqlDatabase: string;
 }
+
+function parseMySQLConnectionString(connectionString?: string): { host: string; port: number; user: string; password: string; database: string } | null {
+  if (!connectionString) return null;
+  
+  try {
+    const url = new URL(connectionString);
+    return {
+      host: url.hostname,
+      port: parseInt(url.port) || 3306,
+      user: url.username,
+      password: url.password,
+      database: url.pathname.replace('/', ''),
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+const mysqlConnection = parseMySQLConnectionString(process.env.MYSQL_CONNECTION_STRING);
 
 export const config: Config = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
@@ -31,6 +55,11 @@ export const config: Config = {
   tributePaymentLinkTrial: process.env.TRIBUTE_PAYMENT_LINK_TRIAL || '',
   adminIds: (process.env.ADMIN_IDS || '').split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id)),
   subscriptionCheckInterval: parseInt(process.env.SUBSCRIPTION_CHECK_INTERVAL || '300000'),
+  mysqlHost: mysqlConnection?.host || process.env.MYSQL_HOST || 'localhost',
+  mysqlPort: mysqlConnection?.port || parseInt(process.env.MYSQL_PORT || '3306'),
+  mysqlUser: mysqlConnection?.user || process.env.MYSQL_USER || 'root',
+  mysqlPassword: mysqlConnection?.password || process.env.MYSQL_PASSWORD || '',
+  mysqlDatabase: mysqlConnection?.database || process.env.MYSQL_DATABASE || 'alyabot',
 };
 
 export const validateConfig = (): void => {
