@@ -5,3 +5,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.db
+package-lock.json
+data/
+bun.lock

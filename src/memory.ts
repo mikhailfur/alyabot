@@ -1,61 +1,73 @@
 import { ChatMessage } from './database';
 
 export class MemoryManager {
-  private maxHistoryLength = 20;
-  private maxContextLength = 2000;
+  private readonly maxHistoryLength = 15;
+  private readonly maxContextLength = 1800;
+  private readonly importantKeywords = new Set([
+    'имя', 'зовут', 'меня', 'я', 'мое', 'моя', 'мой',
+    'люблю', 'нравится', 'хобби', 'работа', 'учусь',
+    'живу', 'город', 'страна', 'возраст', 'семья',
+    'друзья', 'планы', 'мечты', 'цели'
+  ]);
 
   formatChatHistory(history: ChatMessage[]): string {
-    if (history.length === 0) {
+    if (!history || history.length === 0) {
       return '';
     }
 
-    let context = 'Предыдущие сообщения:\n';
-    let totalLength = context.length;
+    const context: string[] = ['Предыдущие сообщения:\n'];
+    let totalLength = context[0].length;
+    const recentHistory = history.slice(-this.maxHistoryLength);
 
-    for (const msg of history.slice(-this.maxHistoryLength)) {
+    for (const msg of recentHistory) {
+      if (!msg || !msg.message || !msg.response) continue;
+      
       const messageText = `Пользователь: ${msg.message}\nАля: ${msg.response}\n\n`;
       
       if (totalLength + messageText.length > this.maxContextLength) {
         break;
       }
       
-      context += messageText;
+      context.push(messageText);
       totalLength += messageText.length;
     }
 
-    return context;
+    return context.length > 1 ? context.join('') : '';
   }
 
   buildContextWithHistory(history: ChatMessage[], currentMessage: string): string {
+    if (!currentMessage || !currentMessage.trim()) {
+      return '';
+    }
+
     const historyContext = this.formatChatHistory(history);
     
     if (historyContext) {
-      return `${historyContext}Текущее сообщение пользователя: ${currentMessage}`;
+      return `${historyContext}Текущее сообщение пользователя: ${currentMessage.trim()}`;
     }
     
-    return currentMessage;
+    return currentMessage.trim();
   }
 
   shouldRememberMessage(message: string): boolean {
-    const importantKeywords = [
-      'имя', 'зовут', 'меня', 'я', 'мое', 'моя', 'мой',
-      'люблю', 'нравится', 'хобби', 'работа', 'учусь',
-      'живу', 'город', 'страна', 'возраст', 'семья',
-      'друзья', 'планы', 'мечты', 'цели'
-    ];
+    if (!message || typeof message !== 'string') {
+      return false;
+    }
     
     const lowerMessage = message.toLowerCase();
-    return importantKeywords.some(keyword => lowerMessage.includes(keyword));
+    for (const keyword of this.importantKeywords) {
+      if (lowerMessage.includes(keyword)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   extractImportantInfo(message: string, response: string): string {
-    const info: string[] = [];
-    
-    if (this.shouldRememberMessage(message)) {
-      info.push(`Важная информация: ${message}`);
+    if (!this.shouldRememberMessage(message)) {
+      return '';
     }
-    
-    return info.join('\n');
+    return `Важная информация: ${message}`;
   }
 }
 

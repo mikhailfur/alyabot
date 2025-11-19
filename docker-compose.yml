@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  alyabot:
+    build: .
+    container_name: alyabot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./src/images:/app/src/images:ro
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/app/data/alyabot.db
+    networks:
+      - alyabot-network
+
+networks:
+  alyabot-network:
+    driver: bridge
+

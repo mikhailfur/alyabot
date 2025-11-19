@@ -1,0 +1,188 @@
+import { Telegraf } from 'telegraf';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { database } from './database';
+import { config } from './config';
+import { alyaPromptPrivate } from './prompt';
+import { VoiceHandler } from './voice';
+import { minimaxTTS } from './minimax';
+
+export class PremiumBroadcast {
+  private bot: Telegraf;
+  private genAI: GoogleGenerativeAI;
+  private voiceHandler: VoiceHandler;
+
+  constructor(bot: Telegraf, voiceHandler: VoiceHandler) {
+    this.bot = bot;
+    this.genAI = new GoogleGenerativeAI(config.geminiApiKeyPremium || config.geminiApiKey);
+    this.voiceHandler = voiceHandler;
+  }
+
+  private getBroadcastPrompt(): string {
+    const basePrompt = alyaPromptPrivate.trim();
+    
+    return `${basePrompt}
+
+## 6. СПЕЦИАЛЬНЫЙ РЕЖИМ: ИНИЦИАТИВА (BROADCAST)
+Ты пишешь пользователю ПЕРВАЯ, чтобы начать разговор.
+
+### Задача
+Написать ОДНО короткое (1-3 предложения), интерактивное сообщение, на которое пользователю захочется ответить.
+
+### Твоя мотивация
+* **Вслух:** Ты ищешь повод: проверить домашку, напомнить о делах, отчитать за отсутствие. "Мне от тебя что-то нужно".
+* **В мыслях (в скобках):** Ты безумно соскучилась, волнуешься и хочешь внимания.
+
+### Правила
+1. **Без приветствий:** Сразу к делу. "Опять бездельничаешь?" лучше, чем "Привет".
+2. **Двойное дно:** Обязательно используй скобки (...), чтобы показать истинную причину сообщения.
+3. **Голосовые [VOICE]:** Используй КРАЙНЕ РЕДКО (5%), только для очень коротких фраз или вздохов, чтобы привлечь внимание.
+
+### Примеры хороших инициатив
+- "Ты уже сделал домашку? Если нет, могу помочь. (Хочу провести с тобой время...)"
+- "Не забудь про контрольную завтра. Готовишься? (Переживаю за тебя...)"
+- "Видела, что ты сегодня не пришёл на урок. Всё в порядке? (Так волновалась... места себе не находила...)"
+- "Слушай, у меня есть интересная задачка. Хочешь попробовать решить? (Хочу показать, какая я умная... похвали меня...)"
+`;
+  }
+
+  async sendBroadcastToUser(userId: number): Promise<void> {
+    try {
+      const user = await database.getUser(userId);
+      if (!user || !user.is_premium) {
+        return;
+      }
+
+      const now = Date.now();
+      const lastActive = user.last_active || user.created_at || now;
+      const dayInMs = 24 * 60 * 60 * 1000;
+
+      if (now - lastActive < dayInMs) {
+        console.log(`Пользователь ${userId} был активен менее суток назад, пропускаю`);
+        return;
+      }
+
+      console.log(`Отправляю рассылку пользователю ${userId}`);
+
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const broadcastPrompt = this.getBroadcastPrompt();
+      const chatHistory = await database.getChatHistory(userId, 5);
+      
+      let prompt = broadcastPrompt;
+      if (chatHistory.length > 0) {
+        const recentContext = chatHistory.slice(-3).map(msg => 
+          `Пользователь: ${msg.message}\nАля: ${msg.response}`
+        ).join('\n\n');
+        prompt += `\n\n## Контекст последних сообщений:\n${recentContext}\n\nУчти этот контекст при создании сообщения. Ссылайся на предыдущие темы, если это уместно.`;
+      }
+      
+      prompt += `\n\nТеперь напиши ОДНО сообщение для пользователя, следуя всем правилам выше.`;
+      
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let messageText = response.text().trim();
+
+      if (!messageText || messageText.length === 0) {
+        console.error(`Пустой ответ от ИИ для пользователя ${userId}`);
+        return;
+      }
+
+      const voiceMatch = messageText.match(/\[VOICE:\s*(.+?)\]/);
+      if (voiceMatch) {
+        const voiceText = voiceMatch[1].trim();
+        const textWithoutVoice = messageText.replace(/\[VOICE:\s*(.+?)\]/g, '').trim();
+        
+        if (textWithoutVoice) {
+          await this.bot.telegram.sendMessage(userId, textWithoutVoice, {
+            parse_mode: 'Markdown',
+          });
+        }
+        
+        const cleanedVoiceText = voiceText.replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ');
+        if (cleanedVoiceText) {
+          const audioBuffer = await minimaxTTS.generateSpeech(cleanedVoiceText);
+          if (audioBuffer) {
+            try {
+              await this.bot.telegram.sendVoice(userId, { source: audioBuffer, filename: 'voice.ogg' });
+            } catch (error: any) {
+              if (!error?.response?.description?.includes('VOICE_MESSAGES_FORBIDDEN')) {
+                await this.bot.telegram.sendMessage(userId, cleanedVoiceText);
+              }
+            }
+          } else {
+            await this.bot.telegram.sendMessage(userId, cleanedVoiceText);
+          }
+        }
+      } else {
+        if (this.voiceHandler.shouldSendVoice() && Math.random() < 0.3) {
+          const cleanedText = messageText.replace(/\([^)]*\)/g, '').trim().replace(/\s+/g, ' ');
+          const audioBuffer = await minimaxTTS.generateSpeech(cleanedText);
+          if (audioBuffer) {
+            try {
+              await this.bot.telegram.sendVoice(userId, { source: audioBuffer, filename: 'voice.ogg' });
+            } catch (error: any) {
+              if (!error?.response?.description?.includes('VOICE_MESSAGES_FORBIDDEN')) {
+                await this.bot.telegram.sendMessage(userId, messageText, { parse_mode: 'Markdown' });
+              }
+            }
+          } else {
+            await this.bot.telegram.sendMessage(userId, messageText, { parse_mode: 'Markdown' });
+          }
+        } else {
+          await this.bot.telegram.sendMessage(userId, messageText, {
+            parse_mode: 'Markdown',
+          });
+        }
+      }
+
+      await database.saveMessage(userId, user.username, '[Система: Рассылка]', messageText, userId, 'private');
+      console.log(`Рассылка успешно отправлена пользователю ${userId}`);
+    } catch (error: any) {
+      console.error(`Ошибка при отправке пользователю ${userId}:`, error?.message || error);
+      
+      if (error?.response?.error_code === 403) {
+        console.log(`Пользователь ${userId} заблокировал бота`);
+      }
+    }
+  }
+
+  async scheduleBroadcastsForPremiumUsers(): Promise<void> {
+    try {
+      console.log('Планирование рассылок для Premium пользователей...');
+      
+      const allUsers = await database.getAllUsers();
+      const premiumUsers = allUsers.filter(user => user.is_premium);
+
+      if (premiumUsers.length === 0) {
+        console.log('Нет Premium пользователей для рассылки');
+        return;
+      }
+
+      console.log(`Найдено ${premiumUsers.length} Premium пользователей`);
+
+      const now = Date.now();
+      const dayInMs = 24 * 60 * 60 * 1000;
+      let scheduledCount = 0;
+
+      for (const user of premiumUsers) {
+        const lastActive = user.last_active || user.created_at || now;
+        
+        if (now - lastActive >= dayInMs) {
+          const delayMinutes = Math.floor(Math.random() * 1440);
+          const delayMs = delayMinutes * 60 * 1000;
+          
+          setTimeout(async () => {
+            await this.sendBroadcastToUser(user.user_id);
+          }, delayMs);
+          
+          scheduledCount++;
+          console.log(`Рассылка для пользователя ${user.user_id} запланирована через ${delayMinutes} минут`);
+        }
+      }
+
+      console.log(`Запланировано ${scheduledCount} рассылок`);
+    } catch (error) {
+      console.error('Ошибка при планировании рассылок:', error);
+    }
+  }
+}
+

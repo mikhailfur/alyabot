@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+*.log
+.DS_Store
+Thumbs.db
+*.db
+.git
+.gitignore
+README.md
+LICENSE
+bun.lock
+docker-compose.yml
+Dockerfile
+.dockerignore
+
