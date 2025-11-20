@@ -76,6 +76,7 @@ bot.start(async (ctx) => {
       [Markup.button.callback('⚙️ Настройки', 'settings')],
       [Markup.button.callback('💎 Premium', 'premium')],
       [Markup.button.callback('📊 Статистика', 'stats')],
+      [Markup.button.callback('ℹ️ Информация', 'info')],
     ]),
   });
 });
@@ -86,7 +87,7 @@ bot.help(async (ctx) => {
   if (isGroup) {
     await ctx.reply('Привет! Я Аля 😊\n\nКоманды для групп:\n/activate - Активировать бота (только админы)\n/deactivate - Деактивировать бота (только админы)\n/settings - Настройки группы\n/memory - Статистика группы\n/clear - Очистить историю группы (только админы)\n\nВ группах отвечаю когда:\n• Меня упоминают @youralyasanbot\n• Бот активирован в группе\n• Отвечаете на мои сообщения');
   } else {
-    await ctx.reply('Просто напиши мне что-нибудь, и я отвечу! Я люблю общаться 😘\n\nДоступные команды:\n/start - Начать общение\n/help - Показать помощь\n/memory - Показать статистику общения\n/clear - Очистить историю общения');
+    await ctx.reply('Просто напиши мне что-нибудь, и я отвечу! Я люблю общаться 😘\n\nДоступные команды:\n/start - Начать общение\n/help - Показать помощь\n/memory - Показать статистику общения\n/clear - Очистить историю общения\n/info - Юридическая информация');
   }
 });
 
@@ -330,6 +331,7 @@ bot.action('menu', async (ctx) => {
     [Markup.button.callback('⚙️ Настройки', 'settings')],
     [Markup.button.callback('💎 Premium', 'premium')],
     [Markup.button.callback('📊 Статистика', 'stats')],
+    [Markup.button.callback('ℹ️ Информация', 'info')],
   ]);
 
   try {
@@ -569,6 +571,67 @@ bot.action('stats', async (ctx) => {
       [Markup.button.callback('🔙 Назад', 'menu')],
     ]),
   });
+});
+
+bot.action('info', async (ctx) => {
+  await ctx.answerCbQuery();
+  
+  const message = ctx.callbackQuery?.message;
+  try {
+    if (message && 'photo' in message && (message as any).photo) {
+      await ctx.deleteMessage();
+    }
+  } catch (e) {
+    // Игнорируем ошибки удаления
+  }
+
+  const infoMessage = 'ℹ️ *Информация*\n\n' +
+    '📄 *Документы:*\n' +
+    '• Политика конфиденциальности\n' +
+    '• Публичная оферта\n' +
+    '• Политика возврата средств\n\n' +
+    '💬 *Поддержка:*\n' +
+    '• Связь с разработчиком';
+
+  try {
+    if (message && 'photo' in message && (message as any).photo) {
+      await ctx.reply(infoMessage, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('🔒 Политика конфиденциальности', 'https://mikhailfur.ru/privacy')],
+          [Markup.button.url('📋 Публичная оферта', 'https://mikhailfur.ru/offer')],
+          [Markup.button.url('💰 Политика возврата', 'https://mikhailfur.ru/refund')],
+          [Markup.button.url('💬 Связаться с разработчиком', 'https://tap.mikhailfur.ru')],
+          [Markup.button.callback('🔙 Назад', 'menu')],
+        ]),
+      });
+    } else {
+      await ctx.editMessageText(infoMessage, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('🔒 Политика конфиденциальности', 'https://mikhailfur.ru/privacy')],
+          [Markup.button.url('📋 Публичная оферта', 'https://mikhailfur.ru/offer')],
+          [Markup.button.url('💰 Политика возврата', 'https://mikhailfur.ru/refund')],
+          [Markup.button.url('💬 Связаться с разработчиком', 'https://tap.mikhailfur.ru')],
+          [Markup.button.callback('🔙 Назад', 'menu')],
+        ]),
+      });
+    }
+  } catch (error: any) {
+    if (error?.response?.description?.includes('message is not modified')) {
+      return;
+    }
+    await ctx.reply(infoMessage, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('🔒 Политика конфиденциальности', 'https://mikhailfur.ru/privacy')],
+        [Markup.button.url('📋 Публичная оферта', 'https://mikhailfur.ru/offer')],
+        [Markup.button.url('💰 Политика возврата', 'https://mikhailfur.ru/refund')],
+        [Markup.button.url('💬 Связаться с разработчиком', 'https://tap.mikhailfur.ru')],
+        [Markup.button.callback('🔙 Назад', 'menu')],
+      ]),
+    });
+  }
 });
 
 adminPanel.setupHandlers();
