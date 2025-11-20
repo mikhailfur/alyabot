@@ -14,25 +14,22 @@ import { VoiceHandler } from './voice';
 import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
+import { GeminiClient } from './gemini-client';
 
 dotenv.config();
 validateConfig();
 
 const bot = new Telegraf(config.telegramBotToken);
 const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium);
+const geminiClient = new GeminiClient(geminiBalancer);
 
 const subscriptionManager = new SubscriptionManager(bot);
 const adminPanel = new AdminPanel(bot);
-const voiceHandler = new VoiceHandler(bot, geminiBalancer);
-const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiBalancer);
+const voiceHandler = new VoiceHandler(bot, geminiClient);
+const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 
 let lastMessageTime: Map<number, number> = new Map();
 const MESSAGE_COOLDOWN = 2000;
-
-async function getModel(userId: number, isPremium: boolean) {
-  const api = geminiBalancer.getToken(isPremium);
-  return api.getGenerativeModel({ model: 'gemini-2.5-flash' });
-}
 
 async function checkAdminStatus(ctx: any): Promise<boolean> {
   try {
@@ -614,7 +611,7 @@ bot.on('photo', async (ctx) => {
 
     const user = await database.getUser(userId);
     const behaviorMode = user?.behavior_mode || 'default';
-    const imageProcessor = new ImageProcessor(geminiBalancer, isPremium);
+    const imageProcessor = new ImageProcessor(geminiClient, isPremium);
 
     const caption = ctx.message.caption || '';
     const imageDescription = await imageProcessor.processImage(imageBuffer, mimeType, caption);
@@ -632,10 +629,17 @@ bot.on('photo', async (ctx) => {
     const prompt = getBehaviorPrompt(behaviorMode);
     const fullPrompt = `${prompt}\n\n${contextWithHistory}\n\nОписание фото: ${imageDescription}\n\nАля:`;
     
-    const model = await getModel(userId, isPremium);
-    const result = await model.generateContent(fullPrompt);
-    const response_text = await result.response;
-    let text = response_text.text();
+    let text: string;
+    try {
+      text = await geminiClient.generateContent({
+        prompt: fullPrompt,
+        isPremium,
+        maxRetries: 3
+      });
+    } catch (error: any) {
+      console.error('Ошибка при генерации ответа на фото через Gemini:', error);
+      throw error;
+    }
 
     const voiceMatch = text.match(/\[VOICE:\s*(.+?)\]/);
     if (voiceMatch && isPremium) {
@@ -705,10 +709,17 @@ bot.on('voice', async (ctx) => {
     const prompt = getBehaviorPrompt(behaviorMode);
     const fullPrompt = `${prompt}\n\n${contextWithHistory}\n\nАля:`;
     
-    const model = await getModel(userId, isPremium);
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    let text = response.text();
+    let text: string;
+    try {
+      text = await geminiClient.generateContent({
+        prompt: fullPrompt,
+        isPremium,
+        maxRetries: 3
+      });
+    } catch (error: any) {
+      console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
+      throw error;
+    }
 
     const voiceMatch = text.match(/\[VOICE:\s*(.+?)\]/);
     if (voiceMatch) {
@@ -794,10 +805,17 @@ bot.on('text', async (ctx) => {
     const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode);
     const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
     
-    const model = await getModel(userId, isPremium);
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    let text = response.text();
+    let text: string;
+    try {
+      text = await geminiClient.generateContent({
+        prompt: fullPrompt,
+        isPremium,
+        maxRetries: 3
+      });
+    } catch (error: any) {
+      console.error('Ошибка при генерации ответа через Gemini:', error);
+      throw error;
+    }
 
     const voiceMatch = text.match(/\[VOICE:\s*(.+?)\]/);
     if (voiceMatch && isPremium) {

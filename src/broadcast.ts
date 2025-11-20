@@ -3,16 +3,16 @@ import { database } from './database';
 import { alyaPromptPrivate } from './prompt';
 import { VoiceHandler } from './voice';
 import { minimaxTTS } from './minimax';
-import { GeminiBalancer } from './gemini-balancer';
+import { GeminiClient } from './gemini-client';
 
 export class PremiumBroadcast {
   private bot: Telegraf;
-  private geminiBalancer: GeminiBalancer;
+  private geminiClient: GeminiClient;
   private voiceHandler: VoiceHandler;
 
-  constructor(bot: Telegraf, voiceHandler: VoiceHandler, geminiBalancer: GeminiBalancer) {
+  constructor(bot: Telegraf, voiceHandler: VoiceHandler, geminiClient: GeminiClient) {
     this.bot = bot;
-    this.geminiBalancer = geminiBalancer;
+    this.geminiClient = geminiClient;
     this.voiceHandler = voiceHandler;
   }
 
@@ -59,8 +59,6 @@ export class PremiumBroadcast {
 
       console.log(`Отправляю рассылку пользователю ${userId}`);
 
-      const genAI = this.geminiBalancer.getToken(true);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const broadcastPrompt = this.getBroadcastPrompt();
       const chatHistory = await database.getChatHistory(userId, 5);
       
@@ -74,9 +72,18 @@ export class PremiumBroadcast {
       
       prompt += `\n\nТеперь напиши ОДНО сообщение для пользователя, следуя всем правилам выше.`;
       
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      let messageText = response.text().trim();
+      let messageText: string;
+      try {
+        messageText = await this.geminiClient.generateContent({
+          prompt,
+          isPremium: true,
+          maxRetries: 3
+        });
+        messageText = messageText.trim();
+      } catch (error: any) {
+        console.error(`Ошибка при генерации сообщения для пользователя ${userId}:`, error);
+        return;
+      }
 
       if (!messageText || messageText.length === 0) {
         console.error(`Пустой ответ от ИИ для пользователя ${userId}`);

@@ -1,15 +1,15 @@
 import { Telegraf } from 'telegraf';
 import { minimaxTTS } from './minimax';
-import { GeminiBalancer } from './gemini-balancer';
+import { GeminiClient } from './gemini-client';
 import { config } from './config';
 
 export class VoiceHandler {
   private bot: Telegraf;
-  private geminiBalancer: GeminiBalancer;
+  private geminiClient: GeminiClient;
 
-  constructor(bot: Telegraf, geminiBalancer: GeminiBalancer) {
+  constructor(bot: Telegraf, geminiClient: GeminiClient) {
     this.bot = bot;
-    this.geminiBalancer = geminiBalancer;
+    this.geminiClient = geminiClient;
   }
 
   async processVoiceMessage(ctx: any, isPremium: boolean = false): Promise<string | null> {
@@ -38,9 +38,6 @@ export class VoiceHandler {
       const audioData = Buffer.from(audioBuffer);
       const base64Audio = audioData.toString('base64');
 
-      const genAI = this.geminiBalancer.getToken(isPremium);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
       const audioPart = {
         inlineData: {
           data: base64Audio,
@@ -50,9 +47,11 @@ export class VoiceHandler {
 
       const prompt = 'Распознай речь в этом аудио сообщении и переведи в текст. Ответь только текстом без дополнительных комментариев.';
 
-      const result = await model.generateContent([prompt, audioPart]);
-      const response = await result.response;
-      const text = response.text();
+      const text = await this.geminiClient.generateContent({
+        prompt: [prompt, audioPart],
+        isPremium,
+        maxRetries: 3
+      });
 
       return text.trim() || null;
     } catch (error) {

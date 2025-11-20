@@ -12,8 +12,6 @@ interface TokenInstance {
 export class GeminiBalancer {
   private freeTokens: TokenInstance[] = [];
   private premiumTokens: TokenInstance[] = [];
-  private currentFreeIndex: number = 0;
-  private currentPremiumIndex: number = 0;
 
   constructor(freeApiKeys: string[], premiumApiKeys: string[] = []) {
     this.freeTokens = freeApiKeys.map(key => ({
@@ -39,28 +37,49 @@ export class GeminiBalancer {
     }
   }
 
-  private getNextToken(tokens: TokenInstance[], currentIndex: number): { token: TokenInstance; newIndex: number } {
+  private getNextToken(tokens: TokenInstance[]): TokenInstance {
     if (tokens.length === 0) {
       throw new Error('Нет доступных токенов');
     }
 
     const availableTokens = tokens.filter(t => t.isAvailable);
     if (availableTokens.length === 0) {
-      availableTokens.push(...tokens);
       tokens.forEach(t => t.isAvailable = true);
+      return this.selectBestToken(tokens);
     }
 
-    const token = availableTokens[currentIndex % availableTokens.length];
-    token.lastUsed = Date.now();
-    token.requestCount++;
-    
-    const newIndex = (currentIndex + 1) % availableTokens.length;
-    return { token, newIndex };
+    return this.selectBestToken(availableTokens);
+  }
+
+  private selectBestToken(tokens: TokenInstance[]): TokenInstance {
+    if (tokens.length === 1) {
+      const token = tokens[0];
+      token.lastUsed = Date.now();
+      token.requestCount++;
+      return token;
+    }
+
+    const now = Date.now();
+    let bestToken = tokens[0];
+    let bestScore = Infinity;
+
+    for (const token of tokens) {
+      const timeSinceLastUse = now - token.lastUsed;
+      const score = token.requestCount * 1000 - timeSinceLastUse;
+      
+      if (score < bestScore) {
+        bestScore = score;
+        bestToken = token;
+      }
+    }
+
+    bestToken.lastUsed = now;
+    bestToken.requestCount++;
+    return bestToken;
   }
 
   getFreeToken(): GoogleGenerativeAI {
-    const { token, newIndex } = this.getNextToken(this.freeTokens, this.currentFreeIndex);
-    this.currentFreeIndex = newIndex;
+    const token = this.getNextToken(this.freeTokens);
     return token.api;
   }
 
@@ -69,8 +88,7 @@ export class GeminiBalancer {
       return this.getFreeToken();
     }
     
-    const { token, newIndex } = this.getNextToken(this.premiumTokens, this.currentPremiumIndex);
-    this.currentPremiumIndex = newIndex;
+    const token = this.getNextToken(this.premiumTokens);
     return token.api;
   }
 
