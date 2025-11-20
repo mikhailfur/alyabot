@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { minimaxTTS } from './minimax';
 import { GeminiBalancer } from './gemini-balancer';
+import { config } from './config';
 
 export class VoiceHandler {
   private bot: Telegraf;
