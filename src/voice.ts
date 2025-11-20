@@ -1,19 +1,14 @@
 import { Telegraf } from 'telegraf';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { minimaxTTS } from './minimax';
-import { config } from './config';
+import { GeminiBalancer } from './gemini-balancer';
 
 export class VoiceHandler {
   private bot: Telegraf;
-  private genAI: GoogleGenerativeAI;
-  private genAIPremium: GoogleGenerativeAI | null;
+  private geminiBalancer: GeminiBalancer;
 
-  constructor(bot: Telegraf) {
+  constructor(bot: Telegraf, geminiBalancer: GeminiBalancer) {
     this.bot = bot;
-    this.genAI = new GoogleGenerativeAI(config.geminiApiKey);
-    this.genAIPremium = config.geminiApiKeyPremium 
-      ? new GoogleGenerativeAI(config.geminiApiKeyPremium)
-      : null;
+    this.geminiBalancer = geminiBalancer;
   }
 
   async processVoiceMessage(ctx: any, isPremium: boolean = false): Promise<string | null> {
@@ -42,14 +37,7 @@ export class VoiceHandler {
       const audioData = Buffer.from(audioBuffer);
       const base64Audio = audioData.toString('base64');
 
-      const apiKey = isPremium && this.genAIPremium 
-        ? config.geminiApiKeyPremium 
-        : config.geminiApiKey;
-      
-      const genAI = isPremium && this.genAIPremium 
-        ? this.genAIPremium 
-        : this.genAI;
-
+      const genAI = this.geminiBalancer.getToken(isPremium);
       const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
       const audioPart = {

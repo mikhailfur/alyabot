@@ -13,26 +13,24 @@ import { AdminPanel } from './admin';
 import { VoiceHandler } from './voice';
 import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
+import { GeminiBalancer } from './gemini-balancer';
 
 dotenv.config();
 validateConfig();
 
 const bot = new Telegraf(config.telegramBotToken);
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-const genAIPremium = config.geminiApiKeyPremium 
-  ? new GoogleGenerativeAI(config.geminiApiKeyPremium)
-  : genAI;
+const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium);
 
 const subscriptionManager = new SubscriptionManager(bot);
 const adminPanel = new AdminPanel(bot);
-const voiceHandler = new VoiceHandler(bot);
-const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler);
+const voiceHandler = new VoiceHandler(bot, geminiBalancer);
+const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiBalancer);
 
 let lastMessageTime: Map<number, number> = new Map();
 const MESSAGE_COOLDOWN = 2000;
 
 async function getModel(userId: number, isPremium: boolean) {
-  const api = isPremium ? genAIPremium : genAI;
+  const api = geminiBalancer.getToken(isPremium);
   return api.getGenerativeModel({ model: 'gemini-2.5-flash' });
 }
 
@@ -234,7 +232,7 @@ bot.command('memory', async (ctx) => {
     }
 
     const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
-
+    
     if (isGroup) {
       const stats = await database.getGroupStats(chatId);
       const message = `📊 *Статистика группы*\n\n` +
@@ -242,7 +240,7 @@ bot.command('memory', async (ctx) => {
         `👥 Уникальных пользователей: ${stats.uniqueUsers || 0}\n` +
         `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
         `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}`;
-
+      
       await ctx.reply(message, {
         parse_mode: 'Markdown',
       });
@@ -257,7 +255,7 @@ bot.command('memory', async (ctx) => {
         `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
         `⭐ Premium: ${user?.is_premium ? 'Да' : 'Нет'}\n\n` +
         `💭 История в памяти: ${chatHistory.length} последних сообщений`;
-
+      
       await ctx.reply(message, {
         parse_mode: 'Markdown',
       });
@@ -616,9 +614,7 @@ bot.on('photo', async (ctx) => {
 
     const user = await database.getUser(userId);
     const behaviorMode = user?.behavior_mode || 'default';
-    const imageProcessor = new ImageProcessor(
-      isPremium ? config.geminiApiKeyPremium : config.geminiApiKey
-    );
+    const imageProcessor = new ImageProcessor(geminiBalancer, isPremium);
 
     const caption = ctx.message.caption || '';
     const imageDescription = await imageProcessor.processImage(imageBuffer, mimeType, caption);

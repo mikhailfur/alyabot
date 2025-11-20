@@ -1,19 +1,18 @@
 import { Telegraf } from 'telegraf';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { database } from './database';
-import { config } from './config';
 import { alyaPromptPrivate } from './prompt';
 import { VoiceHandler } from './voice';
 import { minimaxTTS } from './minimax';
+import { GeminiBalancer } from './gemini-balancer';
 
 export class PremiumBroadcast {
   private bot: Telegraf;
-  private genAI: GoogleGenerativeAI;
+  private geminiBalancer: GeminiBalancer;
   private voiceHandler: VoiceHandler;
 
-  constructor(bot: Telegraf, voiceHandler: VoiceHandler) {
+  constructor(bot: Telegraf, voiceHandler: VoiceHandler, geminiBalancer: GeminiBalancer) {
     this.bot = bot;
-    this.genAI = new GoogleGenerativeAI(config.geminiApiKeyPremium || config.geminiApiKey);
+    this.geminiBalancer = geminiBalancer;
     this.voiceHandler = voiceHandler;
   }
 
@@ -60,7 +59,8 @@ export class PremiumBroadcast {
 
       console.log(`Отправляю рассылку пользователю ${userId}`);
 
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const genAI = this.geminiBalancer.getToken(true);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       const broadcastPrompt = this.getBroadcastPrompt();
       const chatHistory = await database.getChatHistory(userId, 5);
       

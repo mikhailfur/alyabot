@@ -1,15 +1,19 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GeminiBalancer } from './gemini-balancer';
 
 export class ImageProcessor {
-  private genAI: GoogleGenerativeAI;
+  private geminiBalancer: GeminiBalancer;
+  private isPremium: boolean;
 
-  constructor(apiKey: string) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
+  constructor(geminiBalancer: GeminiBalancer, isPremium: boolean = false) {
+    this.geminiBalancer = geminiBalancer;
+    this.isPremium = isPremium;
   }
 
   async processImage(imageBuffer: Buffer, mimeType: string, userMessage?: string): Promise<string | null> {
     try {
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const genAI = this.geminiBalancer.getToken(this.isPremium);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
       
       const imagePart = {
         inlineData: {

@@ -3,8 +3,8 @@ dotenv.config();
 
 export interface Config {
   telegramBotToken: string;
-  geminiApiKey: string;
-  geminiApiKeyPremium: string;
+  geminiApiKeys: string[];
+  geminiApiKeysPremium: string[];
   minimaxApiToken: string;
   minimaxVoiceId: string;
   tributeChannelId: string;
@@ -41,10 +41,30 @@ function parseMySQLConnectionString(connectionString?: string): { host: string; 
 
 const mysqlConnection = parseMySQLConnectionString(process.env.MYSQL_CONNECTION_STRING);
 
+function parseApiKeys(envVar?: string, fallback?: string): string[] {
+  if (envVar) {
+    return envVar.split(',').map(key => key.trim()).filter(key => key.length > 0);
+  }
+  if (fallback) {
+    return [fallback];
+  }
+  return [];
+}
+
+const freeApiKeys = parseApiKeys(
+  process.env.GEMINI_API_KEYS,
+  process.env.GEMINI_API_KEY
+);
+
+const premiumApiKeys = parseApiKeys(
+  process.env.GEMINI_API_KEYS_PREMIUM,
+  process.env.GEMINI_API_KEY_PREMIUM
+);
+
 export const config: Config = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
-  geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiApiKeyPremium: process.env.GEMINI_API_KEY_PREMIUM || '',
+  geminiApiKeys: freeApiKeys,
+  geminiApiKeysPremium: premiumApiKeys,
   minimaxApiToken: process.env.MINIMAX_API_TOKEN || '',
   minimaxVoiceId: process.env.MINIMAX_VOICE_ID || '',
   tributeChannelId: process.env.TRIBUTE_CHANNEL_ID || '',
@@ -66,7 +86,7 @@ export const validateConfig = (): void => {
   if (!config.telegramBotToken) {
     throw new Error('TELEGRAM_BOT_TOKEN не установлен в переменных окружения');
   }
-  if (!config.geminiApiKey) {
-    throw new Error('GEMINI_API_KEY не установлен в переменных окружения');
+  if (config.geminiApiKeys.length === 0) {
+    throw new Error('GEMINI_API_KEY или GEMINI_API_KEYS не установлен в переменных окружения');
   }
 };
