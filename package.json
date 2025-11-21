@@ -7,7 +7,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "test:stress": "ts-node scripts/stress-test.ts",
+    "test:health": "ts-node scripts/health-check.ts"
   },
   "keywords": [
     "telegram",
@@ -31,6 +36,9 @@
   "devDependencies": {
     "@types/node": "^20.10.5",
     "@types/sqlite3": "^3.1.11",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
