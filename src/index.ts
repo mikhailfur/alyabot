@@ -56,11 +56,25 @@ bot.start(async (ctx) => {
   const userId = ctx.from?.id;
   if (!userId) return;
 
+  let referralCode: string | undefined;
+  const startParam = ctx.message.text?.split(' ')[1];
+  
+  if (startParam?.startsWith('ref_')) {
+    referralCode = startParam.replace('ref_', '');
+    const link = await database.getReferralLink(referralCode);
+    if (link && link.is_active) {
+      await database.trackReferralClick(referralCode, userId);
+    } else {
+      referralCode = undefined;
+    }
+  }
+
   await database.createOrUpdateUser(
     userId,
     ctx.from.username,
     ctx.from.first_name,
-    ctx.from.last_name
+    ctx.from.last_name,
+    referralCode
   );
 
   const isPremium = await subscriptionManager.checkUserSubscription(userId);

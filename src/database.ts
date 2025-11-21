@@ -32,31 +32,31 @@ class Database {
 
   private async initDatabase(): Promise<void> {
     try {
-      const createTableSQL = `
-        CREATE TABLE IF NOT EXISTS chat_history (
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS chat_history (
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
           user_id BIGINT NOT NULL,
           username VARCHAR(255),
-          message TEXT NOT NULL,
-          response TEXT NOT NULL,
+        message TEXT NOT NULL,
+        response TEXT NOT NULL,
           timestamp BIGINT NOT NULL,
           chat_id BIGINT,
           chat_type VARCHAR(50),
           INDEX idx_user_timestamp (user_id, timestamp),
           INDEX idx_chat_timestamp (chat_id, timestamp)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      `;
-      
-      const createGroupsTableSQL = `
-        CREATE TABLE IF NOT EXISTS group_settings (
+    `;
+    
+    const createGroupsTableSQL = `
+      CREATE TABLE IF NOT EXISTS group_settings (
           chat_id BIGINT PRIMARY KEY,
-          is_active BOOLEAN DEFAULT 0,
-          mention_mode BOOLEAN DEFAULT 1,
-          admin_only BOOLEAN DEFAULT 0,
+        is_active BOOLEAN DEFAULT 0,
+        mention_mode BOOLEAN DEFAULT 1,
+        admin_only BOOLEAN DEFAULT 0,
           created_at BIGINT NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      `;
-      
+    `;
+    
       const createUsersTableSQL = `
         CREATE TABLE IF NOT EXISTS users (
           user_id BIGINT PRIMARY KEY,
@@ -70,10 +70,12 @@ class Database {
           created_at BIGINT NOT NULL,
           last_active BIGINT,
           total_messages INT DEFAULT 0,
-          trial_used BOOLEAN DEFAULT 0
+          trial_used BOOLEAN DEFAULT 0,
+          referral_source VARCHAR(255) DEFAULT NULL,
+          INDEX idx_referral_source (referral_source)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      `;
-      
+    `;
+    
       const createSubscriptionsTableSQL = `
         CREATE TABLE IF NOT EXISTS subscriptions (
           id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -93,13 +95,53 @@ class Database {
           value TEXT NOT NULL,
           updated_at BIGINT NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      `;
-      
+    `;
+    
       await this.pool.execute(createTableSQL);
       await this.pool.execute(createGroupsTableSQL);
       await this.pool.execute(createUsersTableSQL);
       await this.pool.execute(createSubscriptionsTableSQL);
       await this.pool.execute(createGlobalSettingsTableSQL);
+      
+      const createReferralLinksTableSQL = `
+        CREATE TABLE IF NOT EXISTS referral_links (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(255) UNIQUE NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          created_by BIGINT NOT NULL,
+          created_at BIGINT NOT NULL,
+          clicks INT DEFAULT 0,
+          registrations INT DEFAULT 0,
+          is_active BOOLEAN DEFAULT 1,
+          INDEX idx_code (code),
+          INDEX idx_created_by (created_by)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      const createReferralTrackingTableSQL = `
+        CREATE TABLE IF NOT EXISTS referral_tracking (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          referral_code VARCHAR(255) NOT NULL,
+          user_id BIGINT NOT NULL,
+          clicked_at BIGINT NOT NULL,
+          registered_at BIGINT,
+          INDEX idx_code (referral_code),
+          INDEX idx_user_id (user_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      await this.pool.execute(createReferralLinksTableSQL);
+      await this.pool.execute(createReferralTrackingTableSQL);
+      
+      try {
+        await this.pool.execute('ALTER TABLE users ADD COLUMN referral_source VARCHAR(255) DEFAULT NULL');
+        await this.pool.execute('ALTER TABLE users ADD INDEX idx_referral_source (referral_source)');
+      } catch (e: any) {
+        if (!e.message?.includes('Duplicate column name')) {
+          console.error('Ошибка при добавлении поля referral_source:', e);
+        }
+      }
       
       const [rows] = await this.pool.execute('SELECT value FROM global_settings WHERE `key` = ?', ['default_model']);
       const result = rows as any[];
@@ -119,12 +161,12 @@ class Database {
         return;
       }
 
-      const timestamp = Date.now();
-      const sql = `
-        INSERT INTO chat_history (user_id, username, message, response, timestamp, chat_id, chat_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
-      
+    const timestamp = Date.now();
+    const sql = `
+      INSERT INTO chat_history (user_id, username, message, response, timestamp, chat_id, chat_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    
       await this.pool.execute(sql, [
         userId,
         username || null,
@@ -146,31 +188,31 @@ class Database {
         limit = Math.min(Math.max(limit, 1), 50);
       }
 
-      let sql: string;
-      let params: any[];
+    let sql: string;
+    let params: any[];
       
       const safeLimit = parseInt(String(limit), 10);
-      
-      if (chatId) {
-        sql = `
+    
+    if (chatId) {
+      sql = `
           SELECT id, user_id as userId, username, message, response, timestamp, chat_id as chatId, chat_type as chatType
           FROM chat_history 
-          WHERE user_id = ? AND chat_id = ?
-          ORDER BY timestamp DESC 
+        WHERE user_id = ? AND chat_id = ?
+        ORDER BY timestamp DESC 
           LIMIT ${safeLimit}
-        `;
+      `;
         params = [userId, chatId];
-      } else {
-        sql = `
+    } else {
+      sql = `
           SELECT id, user_id as userId, username, message, response, timestamp, chat_id as chatId, chat_type as chatType
           FROM chat_history 
-          WHERE user_id = ? 
-          ORDER BY timestamp DESC 
+        WHERE user_id = ? 
+        ORDER BY timestamp DESC 
           LIMIT ${safeLimit}
-        `;
+      `;
         params = [userId];
-      }
-      
+    }
+    
       const [rows] = await this.pool.execute(sql, params);
       const messages = rows as any[];
       return (messages || []).reverse();
@@ -272,7 +314,7 @@ class Database {
       if (!chatId) {
         throw new Error('Chat ID не указан');
       }
-      const sql = 'DELETE FROM chat_history WHERE chat_id = ?';
+    const sql = 'DELETE FROM chat_history WHERE chat_id = ?';
       await this.pool.execute(sql, [chatId]);
     } catch (error) {
       console.error('Ошибка при очистке истории группы:', error);
@@ -317,7 +359,7 @@ class Database {
     return (rows as any[])[0] || null;
   }
 
-  async createOrUpdateUser(userId: number, username?: string, firstName?: string, lastName?: string): Promise<void> {
+  async createOrUpdateUser(userId: number, username?: string, firstName?: string, lastName?: string, referralSource?: string): Promise<void> {
     const timestamp = Date.now();
     
     const existingUser = await this.getUser(userId);
@@ -335,10 +377,15 @@ class Database {
         timestamp,
         userId
       ]);
+      
+      if (referralSource && !existingUser.referral_source) {
+        await this.setUserReferralSource(userId, referralSource);
+        await this.trackReferralRegistration(referralSource, userId);
+      }
     } else {
       const sql = `
-        INSERT INTO users (user_id, username, first_name, last_name, created_at, last_active, is_premium, subscription_until, behavior_mode, model_type, total_messages, trial_used)
-        VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'default', NULL, 0, 0)
+        INSERT INTO users (user_id, username, first_name, last_name, created_at, last_active, is_premium, subscription_until, behavior_mode, model_type, total_messages, trial_used, referral_source)
+        VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'default', NULL, 0, 0, ?)
       `;
       await this.pool.execute(sql, [
         userId,
@@ -346,8 +393,13 @@ class Database {
         firstName || null,
         lastName || null,
         timestamp,
-        timestamp
+        timestamp,
+        referralSource || null
       ]);
+      
+      if (referralSource) {
+        await this.trackReferralRegistration(referralSource, userId);
+      }
     }
   }
 
@@ -458,6 +510,92 @@ class Database {
     await this.pool.execute(sql, [userId, 'trial', startedAt, expiresAt]);
     await this.setUserPremium(userId, true, expiresAt);
     await this.setTrialUsed(userId);
+  }
+
+  async createReferralLink(code: string, name: string, createdBy: number): Promise<number> {
+    const sql = `
+      INSERT INTO referral_links (code, name, created_by, created_at, clicks, registrations, is_active)
+      VALUES (?, ?, ?, ?, 0, 0, 1)
+    `;
+    const [result] = await this.pool.execute(sql, [code, name, createdBy, Date.now()]);
+    return (result as any).insertId;
+  }
+
+  async getReferralLink(code: string): Promise<any> {
+    const [rows] = await this.pool.execute('SELECT * FROM referral_links WHERE code = ?', [code]);
+    return (rows as any[])[0] || null;
+  }
+
+  async getAllReferralLinks(): Promise<any[]> {
+    const [rows] = await this.pool.execute('SELECT * FROM referral_links ORDER BY created_at DESC');
+    return rows as any[];
+  }
+
+  async updateReferralLink(id: number, name: string, isActive: boolean): Promise<void> {
+    const sql = 'UPDATE referral_links SET name = ?, is_active = ? WHERE id = ?';
+    await this.pool.execute(sql, [name, isActive, id]);
+  }
+
+  async deleteReferralLink(id: number): Promise<void> {
+    await this.pool.execute('DELETE FROM referral_links WHERE id = ?', [id]);
+  }
+
+  async trackReferralClick(code: string, userId: number): Promise<void> {
+    const link = await this.getReferralLink(code);
+    if (!link) return;
+
+    await this.pool.execute('UPDATE referral_links SET clicks = clicks + 1 WHERE code = ?', [code]);
+    
+    const sql = `
+      INSERT INTO referral_tracking (referral_code, user_id, clicked_at, registered_at)
+      VALUES (?, ?, ?, NULL)
+      ON DUPLICATE KEY UPDATE clicked_at = VALUES(clicked_at)
+    `;
+    try {
+      await this.pool.execute(sql, [code, userId, Date.now()]);
+    } catch (e) {
+      const updateSql = `
+        UPDATE referral_tracking 
+        SET clicked_at = ? 
+        WHERE referral_code = ? AND user_id = ?
+      `;
+      await this.pool.execute(updateSql, [Date.now(), code, userId]);
+    }
+  }
+
+  async trackReferralRegistration(code: string, userId: number): Promise<void> {
+    await this.pool.execute('UPDATE referral_links SET registrations = registrations + 1 WHERE code = ?', [code]);
+    
+    const sql = `
+      UPDATE referral_tracking 
+      SET registered_at = ? 
+      WHERE referral_code = ? AND user_id = ? AND registered_at IS NULL
+    `;
+    await this.pool.execute(sql, [Date.now(), code, userId]);
+  }
+
+  async setUserReferralSource(userId: number, referralCode: string): Promise<void> {
+    const sql = 'UPDATE users SET referral_source = ? WHERE user_id = ?';
+    await this.pool.execute(sql, [referralCode, userId]);
+  }
+
+  async getReferralStats(code: string): Promise<{ clicks: number; registrations: number; users: any[] }> {
+    const link = await this.getReferralLink(code);
+    if (!link) {
+      return { clicks: 0, registrations: 0, users: [] };
+    }
+
+    const [rows] = await this.pool.execute(
+      'SELECT user_id, clicked_at, registered_at FROM referral_tracking WHERE referral_code = ? ORDER BY clicked_at DESC LIMIT 100',
+      [code]
+    );
+    const users = rows as any[];
+
+    return {
+      clicks: link.clicks,
+      registrations: link.registrations,
+      users
+    };
   }
 
   async close(): Promise<void> {
