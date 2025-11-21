@@ -4,6 +4,7 @@ import { config } from './config';
 
 export class AdminPanel {
   private bot: Telegraf;
+  private sessions: Map<number, any> = new Map();
 
   constructor(bot: Telegraf) {
     this.bot = bot;
