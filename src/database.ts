@@ -549,6 +549,22 @@ class Database {
     return (rows as any[])[0] || null;
   }
 
+  async findReferralLinkByNormalizedCode(normalizedCode: string): Promise<any> {
+    const [rows] = await this.pool.execute('SELECT * FROM referral_links');
+    const links = rows as any[];
+    
+    const normalizedInput = normalizedCode.toLowerCase().replace(/_/g, '');
+    
+    for (const link of links) {
+      const normalizedDbCode = link.code.toLowerCase().replace(/_/g, '');
+      if (normalizedDbCode === normalizedInput) {
+        return link;
+      }
+    }
+    
+    return null;
+  }
+
   async getAllReferralLinks(): Promise<any[]> {
     const [rows] = await this.pool.execute('SELECT * FROM referral_links ORDER BY created_at DESC');
     return rows as any[];

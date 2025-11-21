@@ -61,19 +61,29 @@ bot.start(async (ctx) => {
   
   console.log('Start command received, payload:', startParam, 'userId:', userId);
   
-  if (startParam?.startsWith('ref_')) {
-    referralCode = startParam.replace('ref_', '');
-    console.log('Referral code extracted:', referralCode);
+  if (startParam && (startParam.startsWith('ref_') || startParam.startsWith('ref'))) {
+    let extractedCode = startParam.replace(/^ref_?/, '');
+    console.log('Referral code extracted (raw):', extractedCode);
     
     try {
-      const link = await database.getReferralLink(referralCode);
-      console.log('Referral link found:', link ? { id: link.id, name: link.name, is_active: link.is_active } : 'NOT FOUND');
+      let link = await database.getReferralLink(extractedCode);
+      
+      if (!link) {
+        link = await database.findReferralLinkByNormalizedCode(extractedCode);
+        if (link) {
+          extractedCode = link.code;
+          console.log('Found link by normalized comparison, actual code:', link.code);
+        }
+      }
+      
+      referralCode = link ? link.code : undefined;
+      console.log('Referral link found:', link ? { id: link.id, name: link.name, is_active: link.is_active, code: link.code } : 'NOT FOUND');
       
       if (link && link.is_active) {
-        await database.trackReferralClick(referralCode, userId);
-        console.log('Referral click tracked for code:', referralCode, 'userId:', userId);
+        await database.trackReferralClick(link.code, userId);
+        console.log('Referral click tracked for code:', link.code, 'userId:', userId);
       } else {
-        console.log('Referral link not found or inactive:', referralCode);
+        console.log('Referral link not found or inactive:', extractedCode);
         referralCode = undefined;
       }
     } catch (error) {
