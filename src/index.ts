@@ -28,7 +28,7 @@ const adminPanel = new AdminPanel(bot);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 
-let lastMessageTime: Map<number, number> = new Map();
+const lastMessageTime: Map<number, number> = new Map();
 const MESSAGE_COOLDOWN = 2000;
 
 async function checkAdminStatus(ctx: any): Promise<boolean> {

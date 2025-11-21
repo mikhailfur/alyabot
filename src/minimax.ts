@@ -102,7 +102,7 @@ export class MiniMaxTTS {
         return null;
       }
 
-      // @ts-ignore - Buffer is available in Node.js
+      // @ts-expect-error - Buffer is available in Node.js
       const buffer = Buffer.from(audioHex, 'hex');
       
       if (buffer.length < 1000) {

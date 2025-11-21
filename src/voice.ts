@@ -34,7 +34,7 @@ export class VoiceHandler {
 
   private async transcribeAudio(audioBuffer: ArrayBuffer, isPremium: boolean): Promise<string | null> {
     try {
-      // @ts-ignore - Buffer is available in Node.js
+      // @ts-expect-error - Buffer is available in Node.js
       const audioData = Buffer.from(audioBuffer);
       const base64Audio = audioData.toString('base64');
 

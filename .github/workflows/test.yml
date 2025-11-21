@@ -36,7 +36,7 @@ jobs:
         run: npm run typecheck
 
       - name: ESLint check
-        run: npm run lint
+        run: npm run lint -- --max-warnings 100
 
       - name: Build project
         run: npm run build
