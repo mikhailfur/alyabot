@@ -49,6 +49,27 @@ export class AdminPanel {
         }
         return;
       }
+      if (errorDesc.includes('can\'t parse entities')) {
+        console.error('Ошибка парсинга Markdown:', errorDesc);
+        console.error('Проблемное сообщение:', message.substring(0, 500));
+        try {
+          await ctx.editMessageText(message, {
+            parse_mode: undefined,
+            ...keyboard,
+          });
+        } catch (e: any) {
+          console.error('Ошибка при отправке без Markdown:', e);
+          try {
+            await ctx.reply(message.replace(/[*_`\[\]()~]/g, ''), {
+              parse_mode: undefined,
+              ...keyboard,
+            });
+          } catch (e2) {
+            console.error('Критическая ошибка при отправке сообщения:', e2);
+          }
+        }
+        return;
+      }
       console.error('Ошибка при редактировании сообщения:', error);
       throw error;
     }
@@ -60,8 +81,22 @@ export class AdminPanel {
         parse_mode: 'Markdown',
         ...(keyboard || {}),
       });
-    } catch (error) {
-      console.error('Ошибка при отправке сообщения:', error);
+    } catch (error: any) {
+      const errorDesc = error?.response?.description || '';
+      if (errorDesc.includes('can\'t parse entities')) {
+        console.error('Ошибка парсинга Markdown:', errorDesc);
+        console.error('Проблемное сообщение:', message.substring(0, 500));
+        try {
+          await ctx.reply(message, {
+            parse_mode: undefined,
+            ...(keyboard || {}),
+          });
+        } catch (e) {
+          console.error('Ошибка при отправке без Markdown:', e);
+        }
+      } else {
+        console.error('Ошибка при отправке сообщения:', error);
+      }
     }
   }
 
@@ -512,12 +547,11 @@ export class AdminPanel {
           
           const safeName = this.escapeMarkdown(name);
           const safeCode = this.escapeMarkdown(code);
-          const safeLink = this.escapeMarkdown(referralLink);
           await ctx.reply(
             `✅ *Реферальная ссылка создана!*\n\n` +
             `📝 Название: ${safeName}\n` +
-            `🔗 Код: ${safeCode}\n` +
-            `🔗 Ссылка: \`${safeLink}\``,
+            `🔗 Код: \`${safeCode}\`\n` +
+            `🔗 Ссылка: ${referralLink}`,
             {
               parse_mode: 'Markdown',
               ...Markup.inlineKeyboard([
@@ -575,11 +609,10 @@ export class AdminPanel {
           const referralLink = `https://t.me/${botUsername}?start=ref_${link.code}`;
           const safeName = this.escapeMarkdown(link.name);
           const safeCode = this.escapeMarkdown(link.code);
-          const safeLink = this.escapeMarkdown(referralLink);
           message += `${status} *${safeName}*\n`;
           message += `   Код: \`${safeCode}\`\n`;
           message += `   Переходов: ${link.clicks} | Регистраций: ${link.registrations}\n`;
-          message += `   Ссылка: \`${safeLink}\`\n\n`;
+          message += `   Ссылка: ${referralLink}\n\n`;
         }
       }
 
@@ -617,10 +650,9 @@ export class AdminPanel {
       
       const safeName = this.escapeMarkdown(link.name);
       const safeCode = this.escapeMarkdown(link.code);
-      const safeLink = this.escapeMarkdown(referralLink);
       const message = `🔗 *${safeName}*\n\n` +
         `📝 Код: \`${safeCode}\`\n` +
-        `🔗 Ссылка: \`${safeLink}\`\n\n` +
+        `🔗 Ссылка: ${referralLink}\n\n` +
         `📊 *Статистика:*\n` +
         `👆 Переходов: ${link.clicks}\n` +
         `✅ Регистраций: ${link.registrations}\n` +
