@@ -13,6 +13,8 @@ export interface Config {
   tributePaymentLink6Months: string;
   tributePaymentLink12Months: string;
   tributePaymentLinkTrial: string;
+  referalChannelId: string;
+  referalChannelLink: string;
   adminIds: number[];
   subscriptionCheckInterval: number;
   mysqlHost: string;
@@ -73,6 +75,8 @@ export const config: Config = {
   tributePaymentLink6Months: process.env.TRIBUTE_PAYMENT_LINK_6_MONTHS || '',
   tributePaymentLink12Months: process.env.TRIBUTE_PAYMENT_LINK_12_MONTHS || '',
   tributePaymentLinkTrial: process.env.TRIBUTE_PAYMENT_LINK_TRIAL || '',
+  referalChannelId: process.env.REFERAL_CHANNEL_ID || '',
+  referalChannelLink: process.env.REFERAL_CHANNEL_LINK || '',
   adminIds: (process.env.ADMIN_IDS || '').split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id)),
   subscriptionCheckInterval: parseInt(process.env.SUBSCRIPTION_CHECK_INTERVAL || '300000'),
   mysqlHost: mysqlConnection?.host || process.env.MYSQL_HOST || 'localhost',

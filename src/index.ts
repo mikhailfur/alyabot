@@ -15,6 +15,7 @@ import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
 import { GeminiClient } from './gemini-client';
+import { ReferralManager } from './referral';
 
 dotenv.config();
 validateConfig();
@@ -27,6 +28,7 @@ const subscriptionManager = new SubscriptionManager(bot);
 const adminPanel = new AdminPanel(bot);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
+const referralManager = new ReferralManager(bot);
 
 const lastMessageTime: Map<number, number> = new Map();
 const MESSAGE_COOLDOWN = 2000;
@@ -63,6 +65,24 @@ bot.start(async (ctx) => {
     ctx.from.last_name
   );
 
+  const startParam = ctx.message.text?.split(' ')[1];
+  if (startParam?.startsWith('ref_')) {
+    const referrerId = parseInt(startParam.replace('ref_', ''));
+    if (referrerId && referrerId !== userId) {
+      const registered = await referralManager.registerReferral(referrerId, userId);
+      if (registered) {
+        await ctx.reply(
+          `👯‍♀️ *Ты пришел по реферальной ссылке!*\n\n` +
+          `🎁 Получи ${referralManager.REFEREE_BONUS_HOURS} часов Premium, если:\n` +
+          `• Отправишь минимум 5 сообщений\n` +
+          `• Подпишешься на наш канал\n\n` +
+          `Начни общаться, и бонусы будут начислены автоматически! 😊`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    }
+  }
+
   const isPremium = await subscriptionManager.checkUserSubscription(userId);
   
   const message = `👋 *Привет! Я Аля* 😊\n\n` +
@@ -76,9 +96,14 @@ bot.start(async (ctx) => {
       [Markup.button.callback('⚙️ Настройки', 'settings')],
       [Markup.button.callback('💎 Premium', 'premium')],
       [Markup.button.callback('📊 Статистика', 'stats')],
+      [Markup.button.callback('👯‍♀️ Пригласи друга', 'referral')],
       [Markup.button.callback('ℹ️ Информация', 'info')],
     ]),
   });
+
+  if (startParam?.startsWith('ref_')) {
+    await referralManager.sendChannelSubscriptionReminder(ctx, userId);
+  }
 });
 
 bot.help(async (ctx) => {
@@ -331,6 +356,7 @@ bot.action('menu', async (ctx) => {
     [Markup.button.callback('⚙️ Настройки', 'settings')],
     [Markup.button.callback('💎 Premium', 'premium')],
     [Markup.button.callback('📊 Статистика', 'stats')],
+    [Markup.button.callback('👯‍♀️ Пригласи друга', 'referral')],
     [Markup.button.callback('ℹ️ Информация', 'info')],
   ]);
 
@@ -634,6 +660,79 @@ bot.action('info', async (ctx) => {
   }
 });
 
+bot.action('referral', async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const referralLink = await referralManager.getReferralLink(userId);
+  const referralsCount = await referralManager.getReferralsCount(userId);
+
+  const message = `👯‍♀️ *Аля хочет познакомиться с твоими друзьями!*\n\n` +
+    `Тебе нравится общаться со мной? Не будь жадиной, поделись ссылкой с другом!\n\n` +
+    `👇 *Твоя личная ссылка:*\n\`${referralLink}\`\n\n` +
+    `🎁 *Бонусы:*\n` +
+    `• Друг получит ${referralManager.REFEREE_BONUS_HOURS} часов Premium (без карты!)\n` +
+    `• Ты получишь ${referralManager.REFERER_BONUS_HOURS} часов Premium за каждого друга!\n\n` +
+    `Пригласи 15 друзей — и пользуйся мной месяц бесплатно! 😉\n\n` +
+    `📊 Приглашено друзей: ${referralsCount}`;
+
+  try {
+    await ctx.editMessageText(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('🔗 Поделиться ссылкой', `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Познакомься с Алей — моим AI-компаньоном!')}`)],
+        [Markup.button.callback('🔙 Назад', 'menu')],
+      ]),
+    });
+  } catch (error: any) {
+    if (error?.response?.description?.includes('message is not modified')) {
+      return;
+    }
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('🔗 Поделиться ссылкой', `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Познакомься с Алей — моим AI-компаньоном!')}`)],
+        [Markup.button.callback('🔙 Назад', 'menu')],
+      ]),
+    });
+  }
+});
+
+bot.action('check_subscription', async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  const isSubscribed = await referralManager.checkChannelSubscription(userId);
+  
+  if (isSubscribed) {
+    const bonuses = await referralManager.checkAndGiveBonuses(userId);
+    if (bonuses.refereeBonus || bonuses.referrerBonus) {
+      let message = '✅ Отлично! Ты подписан на канал.\n\n';
+      if (bonuses.refereeBonus) {
+        message += `🎁 Ты получил ${referralManager.REFEREE_BONUS_HOURS} часов Premium!\n\n`;
+      }
+      if (bonuses.referrerBonus) {
+        message += `🎉 Твой друг выполнил условия, ты получил ${referralManager.REFERER_BONUS_HOURS} часов Premium!`;
+      }
+      await ctx.reply(message);
+    } else {
+      await ctx.reply('✅ Отлично! Ты подписан на канал. Продолжай общаться, чтобы получить бонусы!');
+    }
+  } else {
+    await ctx.reply(
+      '❌ Ты еще не подписан на канал. Подпишись и получи бонусные часы Premium!',
+      {
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('📢 Подписаться на канал', config.referalChannelLink)],
+          [Markup.button.callback('🔄 Проверить еще раз', 'check_subscription')],
+        ]),
+      }
+    );
+  }
+});
+
 adminPanel.setupHandlers();
 
 bot.on('photo', async (ctx) => {
@@ -721,6 +820,26 @@ bot.on('photo', async (ctx) => {
 
     await database.saveMessage(userId, ctx.from?.username, `[Фото] ${caption || ''}`, text, chatId, ctx.chat?.type);
     await database.updateUserActivity(userId);
+
+    const bonuses = await referralManager.checkAndGiveBonuses(userId);
+    if (bonuses.refereeBonus) {
+      await ctx.reply(`🎁 *Поздравляю! Ты получил ${referralManager.REFEREE_BONUS_HOURS} часов Premium за выполнение условий реферальной программы!*`, { parse_mode: 'Markdown' });
+    }
+    if (bonuses.referrerBonus) {
+      const referral = await database.getReferralByReferee(userId);
+      if (referral) {
+        try {
+          await bot.telegram.sendMessage(
+            referral.referrer_id,
+            `🎉 *Твой друг выполнил условия реферальной программы!*\n\n` +
+            `Ты получил ${referralManager.REFERER_BONUS_HOURS} часов Premium! Спасибо, что пригласил друга! 😊`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (e) {
+          console.error('Ошибка при отправке уведомления рефереру:', e);
+        }
+      }
+    }
   } catch (error) {
     console.error('Ошибка при обработке фото:', error);
     try {
@@ -801,6 +920,26 @@ bot.on('voice', async (ctx) => {
 
     await database.saveMessage(userId, ctx.from?.username, `[Голос] ${transcription}`, text, chatId, ctx.chat?.type);
     await database.updateUserActivity(userId);
+
+    const bonuses = await referralManager.checkAndGiveBonuses(userId);
+    if (bonuses.refereeBonus) {
+      await ctx.reply(`🎁 *Поздравляю! Ты получил ${referralManager.REFEREE_BONUS_HOURS} часов Premium за выполнение условий реферальной программы!*`, { parse_mode: 'Markdown' });
+    }
+    if (bonuses.referrerBonus) {
+      const referral = await database.getReferralByReferee(userId);
+      if (referral) {
+        try {
+          await bot.telegram.sendMessage(
+            referral.referrer_id,
+            `🎉 *Твой друг выполнил условия реферальной программы!*\n\n` +
+            `Ты получил ${referralManager.REFERER_BONUS_HOURS} часов Premium! Спасибо, что пригласил друга! 😊`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (e) {
+          console.error('Ошибка при отправке уведомления рефереру:', e);
+        }
+      }
+    }
   } catch (error) {
     console.error('Ошибка при обработке голосового сообщения:', error);
     try {
@@ -897,6 +1036,26 @@ bot.on('text', async (ctx) => {
     
     await database.saveMessage(userId, username, userMessage, text, chatId, chatType);
     await database.updateUserActivity(userId);
+
+    const bonuses = await referralManager.checkAndGiveBonuses(userId);
+    if (bonuses.refereeBonus) {
+      await ctx.reply(`🎁 *Поздравляю! Ты получил ${referralManager.REFEREE_BONUS_HOURS} часов Premium за выполнение условий реферальной программы!*`, { parse_mode: 'Markdown' });
+    }
+    if (bonuses.referrerBonus) {
+      const referral = await database.getReferralByReferee(userId);
+      if (referral) {
+        try {
+          await bot.telegram.sendMessage(
+            referral.referrer_id,
+            `🎉 *Твой друг выполнил условия реферальной программы!*\n\n` +
+            `Ты получил ${referralManager.REFERER_BONUS_HOURS} часов Premium! Спасибо, что пригласил друга! 😊`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch (e) {
+          console.error('Ошибка при отправке уведомления рефереру:', e);
+        }
+      }
+    }
     
   } catch (error) {
     console.error('Ошибка при генерации ответа:', error);
