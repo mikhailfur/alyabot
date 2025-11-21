@@ -78,16 +78,8 @@ bot.start(async (ctx) => {
       
       referralCode = link ? link.code : undefined;
       console.log('Referral link found:', link ? { id: link.id, name: link.name, is_active: link.is_active, code: link.code } : 'NOT FOUND');
-      
-      if (link && link.is_active) {
-        await database.trackReferralClick(link.code, userId);
-        console.log('Referral click tracked for code:', link.code, 'userId:', userId);
-      } else {
-        console.log('Referral link not found or inactive:', extractedCode);
-        referralCode = undefined;
-      }
     } catch (error) {
-      console.error('Error tracking referral click:', error);
+      console.error('Error finding referral link:', error);
       referralCode = undefined;
     }
   }
@@ -99,6 +91,18 @@ bot.start(async (ctx) => {
     ctx.from.last_name,
     referralCode
   );
+
+  if (referralCode) {
+    try {
+      const link = await database.getReferralLink(referralCode);
+      if (link && link.is_active) {
+        await database.trackReferralClick(referralCode, userId);
+        console.log('Referral click tracked for code:', referralCode, 'userId:', userId);
+      }
+    } catch (error) {
+      console.error('Error tracking referral click:', error);
+    }
+  }
 
   const isPremium = await subscriptionManager.checkUserSubscription(userId);
   
