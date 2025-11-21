@@ -172,11 +172,13 @@ export class AdminPanel {
 
     const username = user.username ? `@${user.username}` : user.first_name || `ID:${user.user_id}`;
     const currentModel = user.model_type || (user.is_premium ? 'pro (авто)' : 'flash (авто)');
+    const safeUsername = this.escapeMarkdown(username);
+    const safeModel = this.escapeMarkdown(currentModel);
 
     const message = `⚙️ *Управление моделью пользователя*\n\n` +
-      `👤 Пользователь: ${username}\n` +
+      `👤 Пользователь: ${safeUsername}\n` +
       `⭐ Premium: ${user.is_premium ? 'Да' : 'Нет'}\n` +
-      `🤖 Текущая модель: ${currentModel}\n\n` +
+      `🤖 Текущая модель: ${safeModel}\n\n` +
       `Выберите модель для пользователя:`;
 
       await this.safeEditMessage(ctx, message, Markup.inlineKeyboard([
@@ -202,12 +204,15 @@ export class AdminPanel {
     
     for (const user of premiumUsers) {
       const username = user.username ? `@${user.username}` : user.first_name || 'Без имени';
+      const safeUsername = this.escapeMarkdown(username);
       const expiresAt = user.subscription_until 
         ? new Date(user.subscription_until).toLocaleDateString('ru-RU')
         : 'Неизвестно';
+      const safeExpiresAt = this.escapeMarkdown(expiresAt);
       const mode = user.behavior_mode || 'default';
-      message += `⭐ ${username} (ID: ${user.user_id})\n`;
-      message += `   Режим: ${mode} | До: ${expiresAt}\n\n`;
+      const safeMode = this.escapeMarkdown(mode);
+      message += `⭐ ${safeUsername} (ID: ${user.user_id})\n`;
+      message += `   Режим: ${safeMode} | До: ${safeExpiresAt}\n\n`;
     }
 
       await this.safeEditMessage(ctx, message, Markup.inlineKeyboard([
@@ -505,11 +510,14 @@ export class AdminPanel {
           const botUsername = (await this.bot.telegram.getMe()).username;
           const referralLink = `https://t.me/${botUsername}?start=ref_${code}`;
           
+          const safeName = this.escapeMarkdown(name);
+          const safeCode = this.escapeMarkdown(code);
+          const safeLink = this.escapeMarkdown(referralLink);
           await ctx.reply(
             `✅ *Реферальная ссылка создана!*\n\n` +
-            `📝 Название: ${name}\n` +
-            `🔗 Код: ${code}\n` +
-            `🔗 Ссылка: \`${referralLink}\``,
+            `📝 Название: ${safeName}\n` +
+            `🔗 Код: ${safeCode}\n` +
+            `🔗 Ссылка: \`${safeLink}\``,
             {
               parse_mode: 'Markdown',
               ...Markup.inlineKeyboard([
