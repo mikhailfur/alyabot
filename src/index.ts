@@ -57,14 +57,27 @@ bot.start(async (ctx) => {
   if (!userId) return;
 
   let referralCode: string | undefined;
-  const startParam = ctx.message.text?.split(' ')[1];
+  const startParam = ctx.startPayload || ctx.message.text?.split(' ')[1];
+  
+  console.log('Start command received, payload:', startParam, 'userId:', userId);
   
   if (startParam?.startsWith('ref_')) {
     referralCode = startParam.replace('ref_', '');
-    const link = await database.getReferralLink(referralCode);
-    if (link && link.is_active) {
-      await database.trackReferralClick(referralCode, userId);
-    } else {
+    console.log('Referral code extracted:', referralCode);
+    
+    try {
+      const link = await database.getReferralLink(referralCode);
+      console.log('Referral link found:', link ? { id: link.id, name: link.name, is_active: link.is_active } : 'NOT FOUND');
+      
+      if (link && link.is_active) {
+        await database.trackReferralClick(referralCode, userId);
+        console.log('Referral click tracked for code:', referralCode, 'userId:', userId);
+      } else {
+        console.log('Referral link not found or inactive:', referralCode);
+        referralCode = undefined;
+      }
+    } catch (error) {
+      console.error('Error tracking referral click:', error);
       referralCode = undefined;
     }
   }

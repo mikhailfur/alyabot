@@ -125,6 +125,7 @@ class Database {
           user_id BIGINT NOT NULL,
           clicked_at BIGINT NOT NULL,
           registered_at BIGINT,
+          UNIQUE KEY unique_referral_user (referral_code, user_id),
           INDEX idx_code (referral_code),
           INDEX idx_user_id (user_id),
           FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -133,6 +134,28 @@ class Database {
       
       await this.pool.execute(createReferralLinksTableSQL);
       await this.pool.execute(createReferralTrackingTableSQL);
+      
+      try {
+        const [existing] = await this.pool.execute(`
+          SELECT COUNT(*) as count 
+          FROM information_schema.table_constraints 
+          WHERE table_schema = DATABASE() 
+          AND table_name = 'referral_tracking' 
+          AND constraint_name = 'unique_referral_user'
+        `);
+        const hasUniqueKey = (existing as any[])[0]?.count > 0;
+        if (!hasUniqueKey) {
+          await this.pool.execute(`
+            ALTER TABLE referral_tracking 
+            ADD UNIQUE KEY unique_referral_user (referral_code, user_id)
+          `);
+          console.log('Added unique key to referral_tracking table');
+        }
+      } catch (e: any) {
+        if (!e.message?.includes('Duplicate key name')) {
+          console.error('Error adding unique key to referral_tracking:', e.message);
+        }
+      }
       
       try {
         await this.pool.execute('ALTER TABLE users ADD COLUMN referral_source VARCHAR(255) DEFAULT NULL');
@@ -541,25 +564,39 @@ class Database {
   }
 
   async trackReferralClick(code: string, userId: number): Promise<void> {
-    const link = await this.getReferralLink(code);
-    if (!link) return;
-
-    await this.pool.execute('UPDATE referral_links SET clicks = clicks + 1 WHERE code = ?', [code]);
-    
-    const sql = `
-      INSERT INTO referral_tracking (referral_code, user_id, clicked_at, registered_at)
-      VALUES (?, ?, ?, NULL)
-      ON DUPLICATE KEY UPDATE clicked_at = VALUES(clicked_at)
-    `;
     try {
-      await this.pool.execute(sql, [code, userId, Date.now()]);
-    } catch (e) {
-      const updateSql = `
-        UPDATE referral_tracking 
-        SET clicked_at = ? 
-        WHERE referral_code = ? AND user_id = ?
+      const link = await this.getReferralLink(code);
+      if (!link) {
+        console.error('Referral link not found for code:', code);
+        return;
+      }
+
+      console.log('Tracking referral click - code:', code, 'userId:', userId, 'current clicks:', link.clicks);
+      
+      await this.pool.execute('UPDATE referral_links SET clicks = clicks + 1 WHERE code = ?', [code]);
+      
+      const clickedAt = Date.now();
+      const sql = `
+        INSERT INTO referral_tracking (referral_code, user_id, clicked_at, registered_at)
+        VALUES (?, ?, ?, NULL)
+        ON DUPLICATE KEY UPDATE clicked_at = VALUES(clicked_at)
       `;
-      await this.pool.execute(updateSql, [Date.now(), code, userId]);
+      try {
+        await this.pool.execute(sql, [code, userId, clickedAt]);
+        console.log('Referral click inserted/updated in tracking table');
+      } catch (e: any) {
+        console.error('Error inserting referral tracking:', e.message);
+        const updateSql = `
+          UPDATE referral_tracking 
+          SET clicked_at = ? 
+          WHERE referral_code = ? AND user_id = ?
+        `;
+        await this.pool.execute(updateSql, [clickedAt, code, userId]);
+        console.log('Referral click updated in tracking table (fallback)');
+      }
+    } catch (error) {
+      console.error('Error in trackReferralClick:', error);
+      throw error;
     }
   }
 
