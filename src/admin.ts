@@ -14,6 +14,19 @@ export class AdminPanel {
     return config.adminIds.includes(userId);
   }
 
+  private escapeMarkdown(text: string): string {
+    if (!text) return '';
+    return text
+      .replace(/\*/g, '\\*')
+      .replace(/_/g, '\\_')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\(/g, '\\(')
+      .replace(/\)/g, '\\)')
+      .replace(/~/g, '\\~')
+      .replace(/`/g, '\\`');
+  }
+
   private async safeEditMessage(ctx: any, message: string, keyboard: any): Promise<void> {
     try {
       await ctx.editMessageText(message, {
@@ -115,9 +128,11 @@ export class AdminPanel {
         ? new Date(user.last_active).toLocaleDateString('ru-RU')
         : 'Никогда';
       const modelType = user.model_type || (user.is_premium ? 'pro (auto)' : 'flash (auto)');
-      const referralInfo = user.referral_source ? ` | 🔗 Источник: ${user.referral_source}` : '';
-      message += `${premium} ${username} (ID: ${user.user_id})\n`;
-      message += `   Сообщений: ${user.total_messages || 0} | Модель: ${modelType}${referralInfo}\n`;
+      const referralInfo = user.referral_source ? ` | 🔗 Источник: ${this.escapeMarkdown(user.referral_source)}` : '';
+      const safeUsername = this.escapeMarkdown(username);
+      const safeModelType = this.escapeMarkdown(modelType);
+      message += `${premium} ${safeUsername} (ID: ${user.user_id})\n`;
+      message += `   Сообщений: ${user.total_messages || 0} | Модель: ${safeModelType}${referralInfo}\n`;
       message += `   Активен: ${lastActive}\n\n`;
     }
 
@@ -550,10 +565,13 @@ export class AdminPanel {
           const status = link.is_active ? '🟢' : '🔴';
           const botUsername = (await this.bot.telegram.getMe()).username;
           const referralLink = `https://t.me/${botUsername}?start=ref_${link.code}`;
-          message += `${status} *${link.name}*\n`;
-          message += `   Код: \`${link.code}\`\n`;
+          const safeName = this.escapeMarkdown(link.name);
+          const safeCode = this.escapeMarkdown(link.code);
+          const safeLink = this.escapeMarkdown(referralLink);
+          message += `${status} *${safeName}*\n`;
+          message += `   Код: \`${safeCode}\`\n`;
           message += `   Переходов: ${link.clicks} | Регистраций: ${link.registrations}\n`;
-          message += `   Ссылка: \`${referralLink}\`\n\n`;
+          message += `   Ссылка: \`${safeLink}\`\n\n`;
         }
       }
 
@@ -589,9 +607,12 @@ export class AdminPanel {
       const botUsername = (await this.bot.telegram.getMe()).username;
       const referralLink = `https://t.me/${botUsername}?start=ref_${link.code}`;
       
-      const message = `🔗 *${link.name}*\n\n` +
-        `📝 Код: \`${link.code}\`\n` +
-        `🔗 Ссылка: \`${referralLink}\`\n\n` +
+      const safeName = this.escapeMarkdown(link.name);
+      const safeCode = this.escapeMarkdown(link.code);
+      const safeLink = this.escapeMarkdown(referralLink);
+      const message = `🔗 *${safeName}*\n\n` +
+        `📝 Код: \`${safeCode}\`\n` +
+        `🔗 Ссылка: \`${safeLink}\`\n\n` +
         `📊 *Статистика:*\n` +
         `👆 Переходов: ${link.clicks}\n` +
         `✅ Регистраций: ${link.registrations}\n` +
@@ -624,7 +645,8 @@ export class AdminPanel {
         return;
       }
 
-      let message = `📊 *Статистика: ${link.name}*\n\n` +
+      const safeName = this.escapeMarkdown(link.name);
+      let message = `📊 *Статистика: ${safeName}*\n\n` +
         `👆 Всего переходов: ${stats.clicks}\n` +
         `✅ Всего регистраций: ${stats.registrations}\n\n`;
 
@@ -634,9 +656,11 @@ export class AdminPanel {
         for (const user of recentUsers) {
           const userData = await database.getUser(user.user_id);
           const username = userData?.username ? `@${userData.username}` : `ID: ${user.user_id}`;
+          const safeUsername = this.escapeMarkdown(username);
           const status = user.registered_at ? '✅' : '👆';
           const date = user.registered_at ? new Date(user.registered_at).toLocaleString('ru-RU') : new Date(user.clicked_at).toLocaleString('ru-RU');
-          message += `${status} ${username} - ${date}\n`;
+          const safeDate = this.escapeMarkdown(date);
+          message += `${status} ${safeUsername} - ${safeDate}\n`;
         }
         if (stats.users.length > 20) {
           message += `\n... и ещё ${stats.users.length - 20} пользователей`;
