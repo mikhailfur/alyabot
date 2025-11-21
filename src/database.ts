@@ -95,30 +95,11 @@ class Database {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `;
       
-      const createReferralsTableSQL = `
-        CREATE TABLE IF NOT EXISTS referrals (
-          id BIGINT AUTO_INCREMENT PRIMARY KEY,
-          referrer_id BIGINT NOT NULL,
-          referee_id BIGINT NOT NULL,
-          created_at BIGINT NOT NULL,
-          referee_messages_count INT DEFAULT 0,
-          referee_subscribed BOOLEAN DEFAULT 0,
-          referrer_bonus_given BOOLEAN DEFAULT 0,
-          referee_bonus_given BOOLEAN DEFAULT 0,
-          UNIQUE KEY unique_referral (referrer_id, referee_id),
-          INDEX idx_referrer (referrer_id),
-          INDEX idx_referee (referee_id),
-          FOREIGN KEY (referrer_id) REFERENCES users(user_id) ON DELETE CASCADE,
-          FOREIGN KEY (referee_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      `;
-      
       await this.pool.execute(createTableSQL);
       await this.pool.execute(createGroupsTableSQL);
       await this.pool.execute(createUsersTableSQL);
       await this.pool.execute(createSubscriptionsTableSQL);
       await this.pool.execute(createGlobalSettingsTableSQL);
-      await this.pool.execute(createReferralsTableSQL);
       
       const [rows] = await this.pool.execute('SELECT value FROM global_settings WHERE `key` = ?', ['default_model']);
       const result = rows as any[];
@@ -477,80 +458,6 @@ class Database {
     await this.pool.execute(sql, [userId, 'trial', startedAt, expiresAt]);
     await this.setUserPremium(userId, true, expiresAt);
     await this.setTrialUsed(userId);
-  }
-
-  async createReferral(referrerId: number, refereeId: number): Promise<void> {
-    const timestamp = Date.now();
-    const sql = `
-      INSERT INTO referrals (referrer_id, referee_id, created_at, referee_messages_count, referee_subscribed, referrer_bonus_given, referee_bonus_given)
-      VALUES (?, ?, ?, 0, 0, 0, 0)
-      ON DUPLICATE KEY UPDATE created_at = VALUES(created_at)
-    `;
-    await this.pool.execute(sql, [referrerId, refereeId, timestamp]);
-  }
-
-  async getReferral(referrerId: number, refereeId: number): Promise<any | null> {
-    const [rows] = await this.pool.execute(
-      'SELECT * FROM referrals WHERE referrer_id = ? AND referee_id = ?',
-      [referrerId, refereeId]
-    );
-    return (rows as any[])[0] || null;
-  }
-
-  async getReferralByReferee(refereeId: number): Promise<any | null> {
-    const [rows] = await this.pool.execute(
-      'SELECT * FROM referrals WHERE referee_id = ? LIMIT 1',
-      [refereeId]
-    );
-    return (rows as any[])[0] || null;
-  }
-
-  async updateRefereeMessagesCount(refereeId: number, count: number): Promise<void> {
-    const sql = 'UPDATE referrals SET referee_messages_count = ? WHERE referee_id = ?';
-    await this.pool.execute(sql, [count, refereeId]);
-  }
-
-  async updateRefereeSubscribed(refereeId: number, subscribed: boolean): Promise<void> {
-    const sql = 'UPDATE referrals SET referee_subscribed = ? WHERE referee_id = ?';
-    await this.pool.execute(sql, [subscribed ? 1 : 0, refereeId]);
-  }
-
-  async giveReferrerBonus(referrerId: number, refereeId: number): Promise<void> {
-    const sql = 'UPDATE referrals SET referrer_bonus_given = 1 WHERE referrer_id = ? AND referee_id = ?';
-    await this.pool.execute(sql, [referrerId, refereeId]);
-  }
-
-  async giveRefereeBonus(refereeId: number): Promise<void> {
-    const sql = 'UPDATE referrals SET referee_bonus_given = 1 WHERE referee_id = ?';
-    await this.pool.execute(sql, [refereeId]);
-  }
-
-  async getReferrerReferralsCount(referrerId: number): Promise<number> {
-    const [rows] = await this.pool.execute(
-      'SELECT COUNT(*) as count FROM referrals WHERE referrer_id = ?',
-      [referrerId]
-    );
-    return (rows as any[])[0]?.count || 0;
-  }
-
-  async createReferralSubscription(userId: number, hours: number, isReferee: boolean): Promise<void> {
-    const startedAt = Date.now();
-    const expiresAt = startedAt + (hours * 60 * 60 * 1000);
-    const subscriptionType = isReferee ? 'referral_referee' : 'referral_referrer';
-    const sql = `
-      INSERT INTO subscriptions (user_id, subscription_type, started_at, expires_at, is_active)
-      VALUES (?, ?, ?, ?, 1)
-    `;
-    await this.pool.execute(sql, [userId, subscriptionType, startedAt, expiresAt]);
-    
-    const user = await this.getUser(userId);
-    if (user?.subscription_until && user.subscription_until > Date.now()) {
-      const currentExpiresAt = user.subscription_until;
-      const newExpiresAt = Math.max(currentExpiresAt, expiresAt);
-      await this.setUserPremium(userId, true, newExpiresAt);
-    } else {
-      await this.setUserPremium(userId, true, expiresAt);
-    }
   }
 
   async close(): Promise<void> {
