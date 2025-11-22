@@ -28,6 +28,24 @@ const adminPanel = new AdminPanel(bot);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 
+bot.use(async (ctx, next) => {
+  try {
+    await next();
+  } catch (error: any) {
+    console.error('Ошибка в обработчике:', error);
+    try {
+      if (ctx.callbackQuery) {
+        await ctx.answerCbQuery('❌ Произошла ошибка', { show_alert: false });
+      }
+      if (ctx.message && 'text' in ctx.message && !ctx.message.text?.startsWith('/')) {
+        await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.');
+      }
+    } catch (replyError) {
+      console.error('Ошибка при отправке сообщения об ошибке:', replyError);
+    }
+  }
+});
+
 const lastMessageTime: Map<number, number> = new Map();
 const MESSAGE_COOLDOWN = 2000;
 
@@ -124,13 +142,14 @@ bot.start(async (ctx) => {
     buttons.push([Markup.button.url('⭐ Отзывы', config.feedbackUrl)]);
   }
 
-  if (fs.existsSync(imagePath)) {
+  try {
+    await fs.promises.access(imagePath);
     await ctx.replyWithPhoto({ source: imagePath }, {
       caption: message,
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard(buttons),
     });
-  } else {
+  } catch {
     await ctx.reply(message, {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard(buttons),
@@ -189,7 +208,8 @@ bot.command('premium', async (ctx) => {
   }
 
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'sub.png');
-  if (fs.existsSync(imagePath)) {
+  try {
+    await fs.promises.access(imagePath);
     await ctx.replyWithPhoto({ source: imagePath }, {
       caption: message,
       parse_mode: 'Markdown',
@@ -201,7 +221,7 @@ bot.command('premium', async (ctx) => {
         [Markup.button.callback('🔙 Назад', 'menu')],
       ]),
     });
-  } else {
+  } catch {
     await ctx.reply(message, {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
@@ -505,8 +525,16 @@ bot.action('menu', async (ctx) => {
 
   try {
     const hasPhoto = ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message;
+    let imageExists = false;
+    try {
+      await fs.promises.access(imagePath);
+      imageExists = true;
+    } catch {
+      imageExists = false;
+    }
+
     if (hasPhoto) {
-      if (fs.existsSync(imagePath)) {
+      if (imageExists) {
         await ctx.replyWithPhoto({ source: imagePath }, {
           caption: message,
           parse_mode: 'Markdown',
@@ -519,7 +547,7 @@ bot.action('menu', async (ctx) => {
         });
       }
     } else {
-      if (fs.existsSync(imagePath)) {
+      if (imageExists) {
         try {
           await ctx.deleteMessage();
         } catch (e) {
@@ -539,7 +567,14 @@ bot.action('menu', async (ctx) => {
   } catch (error: any) {
     if (error?.response?.description?.includes('message is not modified') || 
         error?.response?.description?.includes('there is no text in the message')) {
-      if (fs.existsSync(imagePath)) {
+      let imageExists = false;
+      try {
+        await fs.promises.access(imagePath);
+        imageExists = true;
+      } catch {
+        imageExists = false;
+      }
+      if (imageExists) {
         await ctx.replyWithPhoto({ source: imagePath }, {
           caption: message,
           parse_mode: 'Markdown',
@@ -630,144 +665,230 @@ bot.action(/^mode_(.+)$/, async (ctx) => {
 });
 
 bot.action('settings', async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from?.id;
-  if (!userId) return;
+  try {
+    await ctx.answerCbQuery();
+    const userId = ctx.from?.id;
+    if (!userId) return;
 
-  const user = await database.getUser(userId);
-  const isPremium = await subscriptionManager.checkUserSubscription(userId);
-  const behaviorMode = user?.behavior_mode || 'default';
+    const user = await database.getUser(userId);
+    const isPremium = await subscriptionManager.checkUserSubscription(userId);
+    const behaviorMode = user?.behavior_mode || 'default';
 
-  const modeNames: Record<string, string> = {
-    default: 'Обычный',
-    study: 'Учёба',
-    work: 'Работа',
-    psychologist: 'Психолог',
-    nsfw: 'NSFW',
-  };
+    const modeNames: Record<string, string> = {
+      default: 'Обычный',
+      study: 'Учёба',
+      work: 'Работа',
+      psychologist: 'Психолог',
+      nsfw: 'NSFW',
+    };
 
-  let message = `⚙️ *Настройки*\n\n`;
-  message += `Режим поведения: ${modeNames[behaviorMode] || 'Обычный'}\n`;
-  message += `Статус: ${isPremium ? '⭐ Premium' : '💬 Бесплатно'}\n\n`;
+    let message = `⚙️ *Настройки*\n\n`;
+    message += `Режим поведения: ${modeNames[behaviorMode] || 'Обычный'}\n`;
+    message += `Статус: ${isPremium ? '⭐ Premium' : '💬 Бесплатно'}\n\n`;
 
-  if (!isPremium) {
-    message += `Для изменения режима нужна Premium подписка!`;
-  }
+    if (!isPremium) {
+      message += `Для изменения режима нужна Premium подписка!`;
+    }
 
-  const buttons = [];
-  if (isPremium) {
-    buttons.push([Markup.button.callback('📚 Учёба', 'mode_study')]);
-    buttons.push([Markup.button.callback('💼 Работа', 'mode_work')]);
-    buttons.push([Markup.button.callback('🧠 Психолог', 'mode_psychologist')]);
-    buttons.push([Markup.button.callback('🔥 NSFW', 'mode_nsfw')]);
-    buttons.push([Markup.button.callback('🔄 Обычный', 'mode_default')]);
-  }
-  buttons.push([Markup.button.callback('🔙 Назад', 'menu')]);
+    const buttons = [];
+    if (isPremium) {
+      buttons.push([Markup.button.callback('📚 Учёба', 'mode_study')]);
+      buttons.push([Markup.button.callback('💼 Работа', 'mode_work')]);
+      buttons.push([Markup.button.callback('🧠 Психолог', 'mode_psychologist')]);
+      buttons.push([Markup.button.callback('🔥 NSFW', 'mode_nsfw')]);
+      buttons.push([Markup.button.callback('🔄 Обычный', 'mode_default')]);
+    }
+    buttons.push([Markup.button.callback('🔙 Назад', 'menu')]);
 
-  await ctx.editMessageText(message, {
-    parse_mode: 'Markdown',
-    ...Markup.inlineKeyboard(buttons),
-  });
-});
-
-bot.action('premium', async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from?.id;
-  if (!userId) return;
-
-  const isPremium = await subscriptionManager.checkUserSubscription(userId);
-  const prices = subscriptionManager.getSubscriptionPrices();
-
-  if (isPremium) {
-    await ctx.editMessageText(`⭐ *У тебя активна Premium подписка!*\n\n` +
-      `Доступные функции:\n` +
-      `• Изменение режима поведения\n` +
-      `• Обработка фото\n` +
-      `• Голосовые сообщения\n` +
-      `• Платный Gemini API`, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('⚙️ Настройки', 'settings')],
-        [Markup.button.callback('🔙 Назад', 'menu')],
-      ]),
-    });
-    return;
-  }
-
-  const canUseTrial = await subscriptionManager.canUseTrial(userId);
-
-  let message = `💎 *Premium подписка*\n\n` +
-    `Получи доступ к расширенным функциям:\n\n` +
-    `✨ Изменение режима поведения (учёба, работа, психолог, NSFW)\n` +
-    `📷 Обработка прикреплённых фото\n` +
-    `🎤 Голосовые сообщения (отправка и получение)\n` +
-    `🚀 Платный Gemini API (быстрее и лучше)\n\n`;
-
-  if (canUseTrial) {
-    message += `🎁 *Пробная подписка на 24 часа за 1₽!*\n\n`;
-  }
-
-  message += `*Тарифы:*\n\n`;
-
-  for (const price of prices) {
-    const discountText = price.discount > 0 ? ` (скидка ${price.discount}%)` : '';
-    message += `${price.months} мес. — ${price.price}₽${discountText}\n`;
-  }
-
-  const buttons = [];
-  if (canUseTrial) {
-    buttons.push([Markup.button.callback('🎁 Пробная подписка (24 часа) — 1₽', 'subscribe_trial')]);
-  }
-  buttons.push([Markup.button.callback('1 месяц — 500₽', 'subscribe_1')]);
-  buttons.push([Markup.button.callback('3 месяца — 1350₽', 'subscribe_3')]);
-  buttons.push([Markup.button.callback('6 месяцев — 2400₽', 'subscribe_6')]);
-  buttons.push([Markup.button.callback('12 месяцев — 4200₽', 'subscribe_12')]);
-  buttons.push([Markup.button.callback('🔙 Назад', 'menu')]);
-
-  const imagePath = path.join(process.cwd(), 'src', 'images', 'sub.png');
-  if (fs.existsSync(imagePath)) {
     try {
-      await ctx.editMessageMedia({
-        type: 'photo',
-        media: { source: fs.createReadStream(imagePath) },
-        caption: message,
-        parse_mode: 'Markdown',
-      }, Markup.inlineKeyboard(buttons));
-    } catch (error) {
-      await ctx.replyWithPhoto({ source: imagePath }, {
-        caption: message,
+      await ctx.editMessageText(message, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard(buttons),
       });
+    } catch (error: any) {
+      if (error?.response?.description?.includes('message is not modified') || 
+          error?.response?.description?.includes('there is no text in the message')) {
+        await ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard(buttons),
+        });
+      } else {
+        throw error;
+      }
     }
-  } else {
-    await ctx.editMessageText(message, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons),
-    });
+  } catch (error: any) {
+    console.error('Ошибка в обработчике settings:', error);
+    throw error;
+  }
+});
+
+bot.action('premium', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const isPremium = await subscriptionManager.checkUserSubscription(userId);
+    const prices = subscriptionManager.getSubscriptionPrices();
+
+    if (isPremium) {
+      try {
+        await ctx.editMessageText(`⭐ *У тебя активна Premium подписка!*\n\n` +
+          `Доступные функции:\n` +
+          `• Изменение режима поведения\n` +
+          `• Обработка фото\n` +
+          `• Голосовые сообщения\n` +
+          `• Платный Gemini API`, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('⚙️ Настройки', 'settings')],
+            [Markup.button.callback('🔙 Назад', 'menu')],
+          ]),
+        });
+      } catch (error: any) {
+        if (error?.response?.description?.includes('message is not modified') || 
+            error?.response?.description?.includes('there is no text in the message')) {
+          await ctx.reply(`⭐ *У тебя активна Premium подписка!*\n\n` +
+            `Доступные функции:\n` +
+            `• Изменение режима поведения\n` +
+            `• Обработка фото\n` +
+            `• Голосовые сообщения\n` +
+            `• Платный Gemini API`, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('⚙️ Настройки', 'settings')],
+              [Markup.button.callback('🔙 Назад', 'menu')],
+            ]),
+          });
+        } else {
+          throw error;
+        }
+      }
+      return;
+    }
+
+    const canUseTrial = await subscriptionManager.canUseTrial(userId);
+
+    let message = `💎 *Premium подписка*\n\n` +
+      `Получи доступ к расширенным функциям:\n\n` +
+      `✨ Изменение режима поведения (учёба, работа, психолог, NSFW)\n` +
+      `📷 Обработка прикреплённых фото\n` +
+      `🎤 Голосовые сообщения (отправка и получение)\n` +
+      `🚀 Платный Gemini API (быстрее и лучше)\n\n`;
+
+    if (canUseTrial) {
+      message += `🎁 *Пробная подписка на 24 часа за 1₽!*\n\n`;
+    }
+
+    message += `*Тарифы:*\n\n`;
+
+    for (const price of prices) {
+      const discountText = price.discount > 0 ? ` (скидка ${price.discount}%)` : '';
+      message += `${price.months} мес. — ${price.price}₽${discountText}\n`;
+    }
+
+    const buttons = [];
+    if (canUseTrial) {
+      buttons.push([Markup.button.callback('🎁 Пробная подписка (24 часа) — 1₽', 'subscribe_trial')]);
+    }
+    buttons.push([Markup.button.callback('1 месяц — 500₽', 'subscribe_1')]);
+    buttons.push([Markup.button.callback('3 месяца — 1350₽', 'subscribe_3')]);
+    buttons.push([Markup.button.callback('6 месяцев — 2400₽', 'subscribe_6')]);
+    buttons.push([Markup.button.callback('12 месяцев — 4200₽', 'subscribe_12')]);
+    buttons.push([Markup.button.callback('🔙 Назад', 'menu')]);
+
+    const imagePath = path.join(process.cwd(), 'src', 'images', 'sub.png');
+    let imageExists = false;
+    try {
+      await fs.promises.access(imagePath);
+      imageExists = true;
+    } catch {
+      imageExists = false;
+    }
+
+    if (imageExists) {
+      try {
+        await ctx.editMessageMedia({
+          type: 'photo',
+          media: { source: fs.createReadStream(imagePath) },
+          caption: message,
+          parse_mode: 'Markdown',
+        }, Markup.inlineKeyboard(buttons));
+      } catch (error: any) {
+        if (error?.response?.description?.includes('message is not modified') || 
+            error?.response?.description?.includes('there is no text in the message')) {
+          await ctx.replyWithPhoto({ source: imagePath }, {
+            caption: message,
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard(buttons),
+          });
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      try {
+        await ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard(buttons),
+        });
+      } catch (error: any) {
+        if (error?.response?.description?.includes('message is not modified') || 
+            error?.response?.description?.includes('there is no text in the message')) {
+          await ctx.reply(message, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard(buttons),
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+  } catch (error: any) {
+    console.error('Ошибка в обработчике premium:', error);
+    throw error;
   }
 });
 
 bot.action('stats', async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from?.id;
-  if (!userId) return;
+  try {
+    await ctx.answerCbQuery();
+    const userId = ctx.from?.id;
+    if (!userId) return;
 
-  const stats = await database.getUserStats(userId);
-  const user = await database.getUser(userId);
+    const stats = await database.getUserStats(userId);
+    const user = await database.getUser(userId);
 
-  const message = `📊 *Статистика*\n\n` +
-    `💬 Всего сообщений: ${stats.totalMessages || 0}\n` +
-    `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
-    `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
-    `⭐ Premium: ${user?.is_premium ? 'Да' : 'Нет'}`;
+    const message = `📊 *Статистика*\n\n` +
+      `💬 Всего сообщений: ${stats.totalMessages || 0}\n` +
+      `📅 Первое сообщение: ${stats.firstMessage ? new Date(stats.firstMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
+      `🕐 Последнее сообщение: ${stats.lastMessage ? new Date(stats.lastMessage).toLocaleDateString('ru-RU') : 'Нет данных'}\n` +
+      `⭐ Premium: ${user?.is_premium ? 'Да' : 'Нет'}`;
 
-  await ctx.editMessageText(message, {
-    parse_mode: 'Markdown',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Назад', 'menu')],
-    ]),
-  });
+    try {
+      await ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Назад', 'menu')],
+        ]),
+      });
+    } catch (error: any) {
+      if (error?.response?.description?.includes('message is not modified') || 
+          error?.response?.description?.includes('there is no text in the message')) {
+        await ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔙 Назад', 'menu')],
+          ]),
+        });
+      } else {
+        throw error;
+      }
+    }
+  } catch (error: any) {
+    console.error('Ошибка в обработчике stats:', error);
+    throw error;
+  }
 });
 
 bot.action('info', async (ctx) => {
