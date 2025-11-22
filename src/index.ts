@@ -111,15 +111,31 @@ bot.start(async (ctx) => {
     `${isPremium ? '⭐ У тебя активна Premium подписка!' : '💬 Ты используешь бесплатную версию'}\n\n` +
     `Просто напиши мне что-нибудь, и я отвечу!`;
 
-  await ctx.reply(message, {
-    parse_mode: 'Markdown',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('⚙️ Настройки', 'settings')],
-      [Markup.button.callback('💎 Premium', 'premium')],
-      [Markup.button.callback('📊 Статистика', 'stats')],
-      [Markup.button.callback('ℹ️ Информация', 'info')],
-    ]),
-  });
+  const imagePath = path.join(__dirname, '..', 'src', 'images', 'menu.jpg');
+  const buttons: any[] = [
+    [Markup.button.callback('⚙️ Настройки', 'settings'), Markup.button.callback('💎 Premium', 'premium')],
+    [Markup.button.callback('📊 Статистика', 'stats'), Markup.button.callback('ℹ️ Информация', 'info')],
+  ];
+
+  if (config.telegramChannelUrl) {
+    buttons.push([Markup.button.url('📢 Канал', config.telegramChannelUrl)]);
+  }
+  if (config.feedbackUrl) {
+    buttons.push([Markup.button.url('⭐ Отзывы', config.feedbackUrl)]);
+  }
+
+  if (fs.existsSync(imagePath)) {
+    await ctx.replyWithPhoto({ source: imagePath }, {
+      caption: message,
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard(buttons),
+    });
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard(buttons),
+    });
+  }
 });
 
 bot.help(async (ctx) => {
@@ -472,33 +488,69 @@ bot.action('menu', async (ctx) => {
   const message = `👋 *Главное меню*\n\n` +
     `${isPremium ? '⭐ У тебя активна Premium подписка!' : '💬 Ты используешь бесплатную версию'}`;
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('⚙️ Настройки', 'settings')],
-    [Markup.button.callback('💎 Premium', 'premium')],
-    [Markup.button.callback('📊 Статистика', 'stats')],
-    [Markup.button.callback('ℹ️ Информация', 'info')],
-  ]);
+  const buttons: any[] = [
+    [Markup.button.callback('⚙️ Настройки', 'settings'), Markup.button.callback('💎 Premium', 'premium')],
+    [Markup.button.callback('📊 Статистика', 'stats'), Markup.button.callback('ℹ️ Информация', 'info')],
+  ];
+
+  if (config.telegramChannelUrl) {
+    buttons.push([Markup.button.url('📢 Канал', config.telegramChannelUrl)]);
+  }
+  if (config.feedbackUrl) {
+    buttons.push([Markup.button.url('⭐ Отзывы', config.feedbackUrl)]);
+  }
+
+  const keyboard = Markup.inlineKeyboard(buttons);
+  const imagePath = path.join(__dirname, '..', 'src', 'images', 'menu.jpg');
 
   try {
     const hasPhoto = ctx.callbackQuery?.message && 'photo' in ctx.callbackQuery.message;
     if (hasPhoto) {
-      await ctx.reply(message, {
-        parse_mode: 'Markdown',
-        ...keyboard,
-      });
+      if (fs.existsSync(imagePath)) {
+        await ctx.replyWithPhoto({ source: imagePath }, {
+          caption: message,
+          parse_mode: 'Markdown',
+          ...keyboard,
+        });
+      } else {
+        await ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...keyboard,
+        });
+      }
     } else {
-      await ctx.editMessageText(message, {
-        parse_mode: 'Markdown',
-        ...keyboard,
-      });
+      if (fs.existsSync(imagePath)) {
+        try {
+          await ctx.deleteMessage();
+        } catch (e) {
+        }
+        await ctx.replyWithPhoto({ source: imagePath }, {
+          caption: message,
+          parse_mode: 'Markdown',
+          ...keyboard,
+        });
+      } else {
+        await ctx.editMessageText(message, {
+          parse_mode: 'Markdown',
+          ...keyboard,
+        });
+      }
     }
   } catch (error: any) {
     if (error?.response?.description?.includes('message is not modified') || 
         error?.response?.description?.includes('there is no text in the message')) {
-      await ctx.reply(message, {
-        parse_mode: 'Markdown',
-        ...keyboard,
-      });
+      if (fs.existsSync(imagePath)) {
+        await ctx.replyWithPhoto({ source: imagePath }, {
+          caption: message,
+          parse_mode: 'Markdown',
+          ...keyboard,
+        });
+      } else {
+        await ctx.reply(message, {
+          parse_mode: 'Markdown',
+          ...keyboard,
+        });
+      }
     } else {
       throw error;
     }

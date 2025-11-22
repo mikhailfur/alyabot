@@ -20,6 +20,8 @@ export interface Config {
   mysqlUser: string;
   mysqlPassword: string;
   mysqlDatabase: string;
+  telegramChannelUrl: string;
+  feedbackUrl: string;
 }
 
 function parseMySQLConnectionString(connectionString?: string): { host: string; port: number; user: string; password: string; database: string } | null {
@@ -80,6 +82,8 @@ export const config: Config = {
   mysqlUser: mysqlConnection?.user || process.env.MYSQL_USER || 'root',
   mysqlPassword: mysqlConnection?.password || process.env.MYSQL_PASSWORD || '',
   mysqlDatabase: mysqlConnection?.database || process.env.MYSQL_DATABASE || 'alyabot',
+  telegramChannelUrl: process.env.TELEGRAM_CHANNEL_URL || '',
+  feedbackUrl: process.env.FEEDBACK_URL || '',
 };
 
 export const validateConfig = (): void => {
