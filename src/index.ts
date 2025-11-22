@@ -684,6 +684,18 @@ bot.on('photo', async (ctx) => {
   try {
     if (!userId || !chatId) return;
 
+    const message = ctx.message as any;
+    const photoCaption = 'caption' in message ? message.caption : '';
+    
+    if (photoCaption && photoCaption.trim().startsWith('/broadcast')) {
+      const hasPhoto = true;
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      const photoFileId = photo.file_id;
+      const messageText = photoCaption.replace('/broadcast', '').trim();
+      await handleBroadcast(ctx, messageText, hasPhoto, photoFileId);
+      return;
+    }
+
     if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
       return;
     }
@@ -1005,28 +1017,16 @@ bot.command('deactivate', async (ctx) => {
   }
 });
 
-bot.command('broadcast', async (ctx) => {
+async function handleBroadcast(ctx: any, messageText: string, hasPhoto: boolean, photoFileId?: string) {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
 
+    console.log('Broadcast command received, userId:', userId, 'isAdmin:', adminPanel.isAdmin(userId));
+
     if (!adminPanel.isAdmin(userId)) {
       await ctx.reply('❌ Эта команда доступна только администраторам!');
       return;
-    }
-
-    const message = ctx.message as any;
-    const hasPhoto = 'photo' in message && message.photo && Array.isArray(message.photo) && message.photo.length > 0;
-    let messageText = '';
-    
-    if (hasPhoto) {
-      messageText = ('caption' in message && message.caption) 
-        ? message.caption.replace('/broadcast', '').trim() 
-        : '';
-    } else {
-      messageText = ('text' in message && message.text) 
-        ? message.text.replace('/broadcast', '').trim() 
-        : '';
     }
 
     if (!messageText && !hasPhoto) {
@@ -1044,16 +1044,14 @@ bot.command('broadcast', async (ctx) => {
     await ctx.reply('⏳ Начинаю рассылку...');
 
     const users = await database.getAllUsers();
+    console.log('Broadcast: found', users.length, 'users');
     let successCount = 0;
     let errorCount = 0;
 
     for (const user of users) {
       try {
-        if (hasPhoto && message.photo && Array.isArray(message.photo)) {
-          const photo = message.photo[message.photo.length - 1];
-          const fileId = photo.file_id;
-          
-          await bot.telegram.sendPhoto(user.user_id, fileId, {
+        if (hasPhoto && photoFileId) {
+          await bot.telegram.sendPhoto(user.user_id, photoFileId, {
             caption: messageText || undefined,
             parse_mode: messageText ? 'Markdown' : undefined
           });
@@ -1085,6 +1083,27 @@ bot.command('broadcast', async (ctx) => {
     console.error('Ошибка при рассылке:', error);
     await ctx.reply(`❌ Ошибка при рассылке: ${error.message || 'Неизвестная ошибка'}`);
   }
+}
+
+bot.command('broadcast', async (ctx) => {
+  const message = ctx.message as any;
+  const hasPhoto = 'photo' in message && message.photo && Array.isArray(message.photo) && message.photo.length > 0;
+  let messageText = '';
+  let photoFileId: string | undefined;
+  
+  if (hasPhoto) {
+    const photo = message.photo[message.photo.length - 1];
+    photoFileId = photo.file_id;
+    messageText = ('caption' in message && message.caption) 
+      ? message.caption.replace('/broadcast', '').trim() 
+      : '';
+  } else {
+    messageText = ('text' in message && message.text) 
+      ? message.text.replace('/broadcast', '').trim() 
+      : '';
+  }
+
+  await handleBroadcast(ctx, messageText, hasPhoto, photoFileId);
 });
 
 subscriptionManager.startPeriodicCheck();
