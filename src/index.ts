@@ -1005,6 +1005,88 @@ bot.command('deactivate', async (ctx) => {
   }
 });
 
+bot.command('broadcast', async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    if (!adminPanel.isAdmin(userId)) {
+      await ctx.reply('❌ Эта команда доступна только администраторам!');
+      return;
+    }
+
+    const message = ctx.message as any;
+    const hasPhoto = 'photo' in message && message.photo && Array.isArray(message.photo) && message.photo.length > 0;
+    let messageText = '';
+    
+    if (hasPhoto) {
+      messageText = ('caption' in message && message.caption) 
+        ? message.caption.replace('/broadcast', '').trim() 
+        : '';
+    } else {
+      messageText = ('text' in message && message.text) 
+        ? message.text.replace('/broadcast', '').trim() 
+        : '';
+    }
+
+    if (!messageText && !hasPhoto) {
+      await ctx.reply('📢 *Рассылка сообщений*\n\n' +
+        'Использование:\n' +
+        '`/broadcast текст сообщения`\n\n' +
+        'Или отправь фото с подписью:\n' +
+        '`/broadcast текст подписи`\n\n' +
+        'Сообщение будет отправлено всем пользователям бота.', {
+        parse_mode: 'Markdown'
+      });
+      return;
+    }
+
+    await ctx.reply('⏳ Начинаю рассылку...');
+
+    const users = await database.getAllUsers();
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const user of users) {
+      try {
+        if (hasPhoto && message.photo && Array.isArray(message.photo)) {
+          const photo = message.photo[message.photo.length - 1];
+          const fileId = photo.file_id;
+          
+          await bot.telegram.sendPhoto(user.user_id, fileId, {
+            caption: messageText || undefined,
+            parse_mode: messageText ? 'Markdown' : undefined
+          });
+        } else {
+          await bot.telegram.sendMessage(user.user_id, messageText, {
+            parse_mode: 'Markdown'
+          });
+        }
+        successCount++;
+        
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch (error: any) {
+        errorCount++;
+        if (error.code === 403) {
+          console.log(`Пользователь ${user.user_id} заблокировал бота`);
+        } else {
+          console.error(`Ошибка отправки пользователю ${user.user_id}:`, error.message);
+        }
+      }
+    }
+
+    await ctx.reply(`✅ *Рассылка завершена*\n\n` +
+      `✅ Успешно: ${successCount}\n` +
+      `❌ Ошибок: ${errorCount}\n` +
+      `📊 Всего пользователей: ${users.length}`, {
+      parse_mode: 'Markdown'
+    });
+  } catch (error: any) {
+    console.error('Ошибка при рассылке:', error);
+    await ctx.reply(`❌ Ошибка при рассылке: ${error.message || 'Неизвестная ошибка'}`);
+  }
+});
+
 subscriptionManager.startPeriodicCheck();
 
 let broadcastTask: cron.ScheduledTask | null = null;
