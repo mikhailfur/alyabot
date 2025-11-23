@@ -107,13 +107,22 @@ export class ApiLimitMonitor {
 
   recordUsage(key: string): void {
     const limit = this.freeKeyLimits.get(key);
-    if (limit) {
+    if (limit && !limit.isExhausted) {
       limit.used++;
       limit.remaining = Math.max(0, limit.remaining - 1);
       
       if (limit.remaining === 0) {
         limit.isExhausted = true;
       }
+    }
+  }
+
+  markKeyExhausted(key: string): void {
+    const limit = this.freeKeyLimits.get(key);
+    if (limit) {
+      limit.isExhausted = true;
+      limit.remaining = 0;
+      limit.used = this.DAILY_LIMIT_PER_KEY;
     }
   }
 
@@ -131,10 +140,11 @@ export class ApiLimitMonitor {
 
   getLoadPercentage(): number {
     const totalLimit = this.freeApiKeys.length * this.DAILY_LIMIT_PER_KEY;
-    const totalUsed = Array.from(this.freeKeyLimits.values())
-      .reduce((sum, limit) => sum + limit.used, 0);
+    const totalRemaining = this.getTotalRemaining();
+    const totalUsed = totalLimit - totalRemaining;
     
-    return Math.min(100, (totalUsed / totalLimit) * 100);
+    if (totalLimit === 0) return 0;
+    return Math.min(100, Math.max(0, (totalUsed / totalLimit) * 100));
   }
 
   getTotalRemaining(): number {

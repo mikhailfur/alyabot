@@ -29,7 +29,7 @@ const apiLimitMonitor = new ApiLimitMonitor(config.geminiApiKeys);
 apiLimitMonitor.startMonitoring();
 
 const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium, apiLimitMonitor);
-const geminiClient = new GeminiClient(geminiBalancer);
+const geminiClient = new GeminiClient(geminiBalancer, apiLimitMonitor);
 
 const subscriptionManager = new SubscriptionManager(bot);
 const adminPanel = new AdminPanel(bot, apiLimitMonitor);
@@ -50,7 +50,7 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
 
   const message = isApiLimit
     ? `😴 *Аля устала!*\n\n` +
-      `Мне нужно отдохнуть. Я отвечу через 30 минут, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`
+      `Все FREE API ключи исчерпали дневной лимит. Купи Premium подписку, чтобы продолжить общение без ограничений! 💪`
     : `😴 *Аля устала!*\n\n` +
       `Ты отправил(а) 30 сообщений за последний час. Мне нужно отдохнуть. Я отвечу через некоторое время, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`;
 
@@ -1285,8 +1285,14 @@ bot.on('text', async (ctx) => {
       rateLimiter.recordMessage(userId);
     }
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('Ошибка при генерации ответа:', error);
+    
+    if (error instanceof RateLimitError) {
+      await sendRateLimitMessage(ctx, true);
+      return;
+    }
+    
     try {
       if (userId && chatId) {
         await ctx.reply('Ой, что-то пошло не так... 😅 Попробуй еще раз!');

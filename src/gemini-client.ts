@@ -26,9 +26,11 @@ export class ProhibitedContentError extends Error {
 
 export class GeminiClient {
   private balancer: GeminiBalancer;
+  private apiLimitMonitor?: any;
 
-  constructor(balancer: GeminiBalancer) {
+  constructor(balancer: GeminiBalancer, apiLimitMonitor?: any) {
     this.balancer = balancer;
+    this.apiLimitMonitor = apiLimitMonitor;
   }
 
   private isRetryableError(error: any): boolean {
@@ -135,6 +137,14 @@ export class GeminiClient {
         }
         
         if (is429) {
+          const genAI = this.balancer.getToken(isPremium);
+          const tokenKey = this.getTokenKey(genAI, isPremium);
+          
+          if (tokenKey && !isPremium && this.apiLimitMonitor) {
+            this.apiLimitMonitor.markKeyExhausted(tokenKey);
+            logger.warn('Ключ API исчерпал лимит (429)', { key: tokenKey.substring(0, 10) + '...' });
+          }
+          
           if (!isPremium) {
             const availableKey = this.balancer.getAvailableFreeKey();
             if (!availableKey) {
@@ -148,9 +158,6 @@ export class GeminiClient {
                 throw new RateLimitError('API rate limit exceeded');
               }
             } else {
-              const genAI = this.balancer.getToken(isPremium);
-              const tokenKey = this.getTokenKey(genAI, isPremium);
-              
               if (tokenKey) {
                 logger.warn(`Ошибка 429, переключаюсь на доступный ключ`, { 
                   attempt: attempt + 1, 
