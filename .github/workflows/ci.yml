@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, beta-2.0.0, develop ]
+  pull_request:
+    branches: [ main, beta-2.0.0, develop ]
+
+jobs:
+  lint:
+    name: Проверка линтов
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: false
+      
+      - name: Check TypeScript types
+        run: npm run typecheck
+        continue-on-error: false
+      
+      - name: Check for common bugs
+        run: |
+          echo "🔍 Проверка на потенциальные баги..."
+          
+          if grep -r "console\.log\|console\.error" src/ --include="*.ts" | grep -v "logger"; then
+            echo "⚠️  Найдены console.log/error вместо logger"
+            exit 1
+          fi
+          
+          if grep -r "any" src/ --include="*.ts" | grep -v "node_modules" | wc -l | grep -q "^[1-9]"; then
+            echo "⚠️  Найдены использования типа 'any'"
+          fi
+          
+          if grep -r "TODO\|FIXME\|XXX\|HACK" src/ --include="*.ts"; then
+            echo "⚠️  Найдены TODO/FIXME комментарии"
+          fi
+          
+          echo "✅ Проверка завершена"
+        continue-on-error: true
+
+  build:
+    name: Сборка проекта
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project
+        run: npm run build
+        continue-on-error: false
+      
+      - name: Check build artifacts
+        run: |
+          if [ ! -d "dist" ]; then
+            echo "❌ Папка dist не создана"
+            exit 1
+          fi
+          if [ ! -f "dist/index.js" ]; then
+            echo "❌ Файл dist/index.js не найден"
+            exit 1
+          fi
+          echo "✅ Сборка успешна"
+
+  test-commands:
+    name: Тестирование команд
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project
+        run: npm run build
+      
+      - name: Run command tests
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TEST_USER_ID: ${{ secrets.TEST_USER_ID }}
+        run: npm run test:commands
+        continue-on-error: false
+
+  health-check:
+    name: Проверка работоспособности
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project
+        run: npm run build
+      
+      - name: Run health check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TEST_USER_ID: ${{ secrets.TEST_USER_ID }}
+        run: npm run test:health
+        continue-on-error: false
+
+  stress-test:
+    name: Стресс-тест
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta-2.0.0')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project
+        run: npm run build
+      
+      - name: Run stress test
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TEST_USER_ID: ${{ secrets.TEST_USER_ID }}
+        run: npm run test:stress
+        continue-on-error: true
+
+  summary:
+    name: Итоговый отчет
+    runs-on: ubuntu-latest
+    needs: [lint, build, test-commands, health-check]
+    if: always()
+    
+    steps:
+      - name: Check results
+        run: |
+          echo "## 📊 Результаты CI" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Задача | Статус |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Линты | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Сборка | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Тесты команд | ${{ needs.test-commands.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Проверка работоспособности | ${{ needs.health-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.build.result }}" != "success" ] || [ "${{ needs.test-commands.result }}" != "success" ] || [ "${{ needs.health-check.result }}" != "success" ]; then
+            echo "❌ Некоторые проверки провалились"
+            exit 1
+          fi
+          
+          echo "✅ Все проверки пройдены успешно!"
+

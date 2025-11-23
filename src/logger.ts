@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as Sentry from '@sentry/node';
 
 enum LogLevel {
   DEBUG = 0,
@@ -91,11 +90,6 @@ export class Logger {
 
   warn(message: string, data?: any): void {
     this.writeLog(LogLevel.WARN, 'WARN', message, data);
-    
-    Sentry.captureMessage(message, {
-      level: 'warning',
-      contexts: data ? { custom: data } : undefined
-    });
   }
 
   error(message: string, error?: any, data?: any): void {
@@ -109,24 +103,6 @@ export class Logger {
       }
     } : data;
     this.writeLog(LogLevel.ERROR, 'ERROR', message, errorData);
-
-    if (error) {
-      Sentry.withScope((scope: Sentry.Scope) => {
-        if (data) {
-          Object.keys(data).forEach(key => {
-            scope.setContext(key, data[key]);
-          });
-        }
-        scope.setTag('log_message', message);
-        scope.setLevel('error');
-        Sentry.captureException(error);
-      });
-    } else if (message) {
-      Sentry.captureMessage(message, {
-        level: 'error',
-        contexts: data ? { custom: data } : undefined
-      });
-    }
   }
 
   userAction(userId: number, action: string, data?: any): void {

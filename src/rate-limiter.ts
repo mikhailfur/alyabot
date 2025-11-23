@@ -12,9 +12,9 @@ export class RateLimiter {
   private messageHistory: Map<number, MessageRecord[]> = new Map();
   private cooldowns: Map<number, number> = new Map();
   
-  private readonly MESSAGE_LIMIT = 50;
-  private readonly TIME_WINDOW_MS = 4 * 60 * 60 * 1000;
-  private readonly COOLDOWN_MS = 2 * 60 * 60 * 1000;
+  private readonly MESSAGE_LIMIT = 30;
+  private readonly TIME_WINDOW_MS = 1 * 60 * 60 * 1000;
+  private readonly COOLDOWN_MS = 40 * 60 * 1000;
 
   canSendMessage(userId: number): RateLimitResult {
     const now = Date.now();
