@@ -148,6 +148,24 @@ class Database {
       
       await this.pool.execute(createApiErrorsTableSQL);
       
+      const createApiKeysTableSQL = `
+        CREATE TABLE IF NOT EXISTS api_keys (
+          key_hash VARCHAR(64) PRIMARY KEY,
+          is_premium BOOLEAN DEFAULT 0,
+          request_count INT DEFAULT 0,
+          last_used BIGINT DEFAULT 0,
+          last_quota_check BIGINT DEFAULT 0,
+          remaining_quota INT DEFAULT 250,
+          quota_exhausted BOOLEAN DEFAULT 0,
+          error_429_date BIGINT DEFAULT 0,
+          updated_at BIGINT NOT NULL,
+          INDEX idx_is_premium (is_premium),
+          INDEX idx_error_429_date (error_429_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      await this.pool.execute(createApiKeysTableSQL);
+      
       try {
         const [existing] = await this.pool.execute(`
           SELECT COUNT(*) as count 
@@ -763,6 +781,89 @@ class Database {
         description: errorDescription
       });
       return false;
+    }
+  }
+
+  async saveApiKeyData(keyHash: string, data: {
+    isPremium: boolean;
+    requestCount: number;
+    lastUsed: number;
+    lastQuotaCheck: number;
+    remainingQuota: number;
+    quotaExhausted: boolean;
+    error429Date: number;
+  }): Promise<void> {
+    try {
+      const sql = `
+        INSERT INTO api_keys (
+          key_hash, is_premium, request_count, last_used, last_quota_check,
+          remaining_quota, quota_exhausted, error_429_date, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          is_premium = VALUES(is_premium),
+          request_count = VALUES(request_count),
+          last_used = VALUES(last_used),
+          last_quota_check = VALUES(last_quota_check),
+          remaining_quota = VALUES(remaining_quota),
+          quota_exhausted = VALUES(quota_exhausted),
+          error_429_date = VALUES(error_429_date),
+          updated_at = VALUES(updated_at)
+      `;
+      
+      await this.pool.execute(sql, [
+        keyHash,
+        data.isPremium ? 1 : 0,
+        data.requestCount,
+        data.lastUsed,
+        data.lastQuotaCheck,
+        data.remainingQuota === Infinity ? 999999 : data.remainingQuota,
+        data.quotaExhausted ? 1 : 0,
+        data.error429Date,
+        Date.now()
+      ]);
+    } catch (error) {
+      logger.error('Ошибка при сохранении данных ключа API', error);
+    }
+  }
+
+  async getApiKeyData(keyHash: string): Promise<{
+    is_premium: boolean;
+    request_count: number;
+    last_used: number;
+    last_quota_check: number;
+    remaining_quota: number;
+    quota_exhausted: boolean;
+    error_429_date: number;
+  } | null> {
+    try {
+      const [rows] = await this.pool.execute(
+        'SELECT * FROM api_keys WHERE key_hash = ?',
+        [keyHash]
+      );
+      const result = (rows as any[])[0];
+      return result || null;
+    } catch (error) {
+      logger.error('Ошибка при получении данных ключа API', error);
+      return null;
+    }
+  }
+
+  async getAllApiKeysData(): Promise<Array<{
+    key_hash: string;
+    is_premium: boolean;
+    request_count: number;
+    last_used: number;
+    last_quota_check: number;
+    remaining_quota: number;
+    quota_exhausted: boolean;
+    error_429_date: number;
+  }>> {
+    try {
+      const [rows] = await this.pool.execute('SELECT * FROM api_keys');
+      return rows as any[];
+    } catch (error) {
+      logger.error('Ошибка при получении всех данных ключей API', error);
+      return [];
     }
   }
 

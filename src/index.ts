@@ -1399,40 +1399,40 @@ async function updateBotDescription(): Promise<void> {
     const activeUsers = await database.getActiveUsersCount(5);
     
     // Получаем количество ошибок 429, если таблица существует
-    let error429Count = 0;
-    try {
-      error429Count = await database.getApiErrorCount('gemini_429', 3);
-    } catch (error: any) {
+      let error429Count = 0;
+      try {
+        error429Count = await database.getApiErrorCount('gemini_429', 3);
+      } catch (error: any) {
       // Если таблица еще не создана, просто используем 0
-      if (error.code === 'ER_NO_SUCH_TABLE') {
-        logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
-        error429Count = 0;
-      } else {
-        logger.warn('Ошибка при получении количества ошибок 429', error);
+        if (error.code === 'ER_NO_SUCH_TABLE') {
+          logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
+          error429Count = 0;
+        } else {
+          logger.warn('Ошибка при получении количества ошибок 429', error);
+        }
       }
-    }
-    
+      
     let loadStatus = '🟢';
     let loadText = 'Низкая';
     
     // Определяем загруженность на основе количества пользователей
-    if (activeUsers >= 20) {
-      loadStatus = '🔴';
-      loadText = 'Повышенная';
-    } else if (activeUsers >= 10) {
-      loadStatus = '🟡';
-      loadText = 'Средняя';
-    }
-    
+      if (activeUsers >= 20) {
+        loadStatus = '🔴';
+        loadText = 'Повышенная';
+      } else if (activeUsers >= 10) {
+        loadStatus = '🟡';
+        loadText = 'Средняя';
+      }
+      
     // Учитываем ошибки 429 от Gemini API за последние 3 часа
     // Если более 8 ошибок - повышенная загруженность
     // Если более 3 ошибок - средняя загруженность
-    if (error429Count >= 8) {
-      loadStatus = '🔴';
-      loadText = 'Повышенная';
-    } else if (error429Count > 3 && loadStatus !== '🔴') {
-      loadStatus = '🟡';
-      loadText = 'Средняя';
+      if (error429Count >= 8) {
+        loadStatus = '🔴';
+        loadText = 'Повышенная';
+      } else if (error429Count > 3 && loadStatus !== '🔴') {
+        loadStatus = '🟡';
+        loadText = 'Средняя';
     }
     
     const shortDescription = `💬 Общается: ${activeUsers} чел. | ${loadStatus} ${loadText}`;
@@ -1484,6 +1484,7 @@ process.once('SIGINT', async () => {
   logger.info('Завершение работы бота... (SIGINT)');
   subscriptionManager.stopPeriodicCheck();
   queueManager.stop();
+  geminiBalancer.stop();
   await database.close();
   bot.stop('SIGINT');
 });
@@ -1491,6 +1492,7 @@ process.once('SIGTERM', async () => {
   logger.info('Завершение работы бота... (SIGTERM)');
   subscriptionManager.stopPeriodicCheck();
   queueManager.stop();
+  geminiBalancer.stop();
   await database.close();
   bot.stop('SIGTERM');
 });
