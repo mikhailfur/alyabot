@@ -1113,7 +1113,9 @@ export class AdminPanel {
           if (isBlocked) {
             await database.deleteUser(user.user_id);
             blockedCount++;
-            console.log(`Удалён заблокированный пользователь: ${user.user_id}`);
+            console.log(`✅ Удалён заблокированный пользователь: ${user.user_id} (@${user.username || 'без username'})`);
+          } else {
+            console.log(`✓ Пользователь ${user.user_id} активен`);
           }
 
           if (checkedCount % 10 === 0) {

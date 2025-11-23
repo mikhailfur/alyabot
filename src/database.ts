@@ -665,12 +665,24 @@ class Database {
 
   async checkUserBlocked(userId: number, bot: any): Promise<boolean> {
     try {
-      await bot.telegram.getChat(userId);
+      await bot.telegram.sendChatAction(userId, 'typing');
       return false;
     } catch (error: any) {
-      if (error.code === 403 || error.response?.error_code === 403) {
+      const errorCode = error.code || error.response?.error_code || error.response?.parameters?.retry_after;
+      const errorDescription = error.description || error.response?.description || error.message || '';
+      
+      if (errorCode === 403 || 
+          errorDescription.toLowerCase().includes('blocked') ||
+          errorDescription.toLowerCase().includes('bot was blocked') ||
+          errorDescription.toLowerCase().includes('user is deactivated') ||
+          errorDescription.toLowerCase().includes('chat not found')) {
         return true;
       }
+      
+      console.log(`Неожиданная ошибка при проверке пользователя ${userId}:`, {
+        code: errorCode,
+        description: errorDescription
+      });
       return false;
     }
   }
