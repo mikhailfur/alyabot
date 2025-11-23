@@ -66,7 +66,22 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
   }
 }
 
-async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium: boolean): Promise<void> {
+async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium: boolean, behaviorMode?: string): Promise<void> {
+  if (behaviorMode === 'nsfw') {
+    const message = `Ваш запрос нарушает условия использования сервиса.\n` +
+      `Аля не может общаться на подобные темы. Ведь она всего лишь хорошая девочка и не может знать о таких вещах.\n\n` +
+      `Пожалуйста, ознакомьтесь с нашими правилами:\n` +
+      `https://mikhailfur.ru/terms`;
+
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('📋 Условия использования', 'https://mikhailfur.ru/terms')],
+      ]),
+    });
+    return;
+  }
+
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
   let imageExists = false;
   try {
@@ -1019,7 +1034,7 @@ bot.on('photo', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке фото:', error);
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
         return;
       }
       console.error('Ошибка при генерации ответа на фото через Gemini:', error);
@@ -1110,7 +1125,7 @@ bot.on('voice', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке голосового:', error);
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
         return;
       }
       console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
@@ -1232,7 +1247,7 @@ bot.on('text', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
         return;
       }
       console.error('Ошибка при генерации ответа через Gemini:', error);
