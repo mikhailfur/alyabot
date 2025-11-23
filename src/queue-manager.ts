@@ -1,6 +1,7 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import { ApiLimitMonitor } from './api-limit-monitor';
 import { logger } from './logger';
+import { config } from './config';
 
 interface QueueItem {
   userId: number;
@@ -39,7 +40,12 @@ export class QueueManager {
 
       this.queue.push(queueItem);
       this.sendQueueMessage(queueItem);
-      this.processQueue();
+      
+      this.processQueueItem(queueItem).then(() => {
+        resolve();
+      }).catch((error) => {
+        reject(error);
+      });
     });
   }
 
@@ -67,8 +73,36 @@ export class QueueManager {
     return this.queue.findIndex(item => item.userId === userId) + 1;
   }
 
+  private getLoadStatusText(loadPercentage: number): string {
+    if (loadPercentage < 40) {
+      return 'Низкая';
+    } else if (loadPercentage < 80) {
+      return 'Средняя';
+    } else {
+      return 'Повышенная';
+    }
+  }
+
+  private formatWaitTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    
+    if (mins > 0 && secs > 0) {
+      return `${mins} мин ${secs} сек`;
+    } else if (mins > 0) {
+      return `${mins} мин`;
+    } else {
+      return `${secs} сек`;
+    }
+  }
+
   private async sendQueueMessage(item: QueueItem): Promise<void> {
     const loadPercentage = this.apiLimitMonitor.getLoadPercentage();
+    
+    if (loadPercentage >= 100) {
+      return;
+    }
+    
     const waitTime = this.calculateWaitTime(loadPercentage);
 
     if (waitTime === 0) {
@@ -76,19 +110,29 @@ export class QueueManager {
     }
 
     const position = this.getPositionInQueue(item.userId);
-    const estimatedWait = Math.ceil(waitTime / 1000);
+    const estimatedWaitSeconds = Math.ceil(waitTime / 1000);
+    const waitTimeFormatted = this.formatWaitTime(estimatedWaitSeconds);
+    const loadStatus = this.getLoadStatusText(loadPercentage);
 
     const message = `⏳ *Ожидание в очереди*\n\n` +
-      `📊 Загруженность API: ${loadPercentage.toFixed(1)}%\n` +
+      `📊 Загруженность: ${loadStatus} (${loadPercentage.toFixed(1)}%)\n` +
       `📍 Ваша позиция: ${position}\n` +
-      `⏱ Ожидаемое время: ~${estimatedWait} сек\n\n` +
-      `⏰ Ваш запрос будет обработан автоматически...`;
+      `⏱ Ожидаемое время: ${waitTimeFormatted}\n\n` +
+      `⏰ Ваш запрос будет обработан автоматически...\n\n` +
+      `Не хочется стоять в очереди? Попробуй Premium`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.url('💎 Попробуй Premium', config.tributePaymentLinkTrial)],
+    ]);
 
     try {
       const sentMessage = await this.bot.telegram.sendMessage(
         item.chatId,
         message,
-        { parse_mode: 'Markdown' }
+        { 
+          parse_mode: 'Markdown',
+          ...keyboard
+        }
       );
       
       item.queueMessageId = sentMessage.message_id;
@@ -104,28 +148,47 @@ export class QueueManager {
     const updateInterval = setInterval(async () => {
       try {
         const loadPercentage = this.apiLimitMonitor.getLoadPercentage();
+        
+        if (loadPercentage >= 100) {
+          clearInterval(updateInterval);
+          this.updateIntervals.delete(item.userId);
+          await this.deleteQueueMessage(item);
+          return;
+        }
+        
         const waitTime = this.calculateWaitTime(loadPercentage);
         const position = this.getPositionInQueue(item.userId);
-        const estimatedWait = Math.max(0, Math.ceil(waitTime / 1000));
+        const estimatedWaitSeconds = Math.max(0, Math.ceil(waitTime / 1000));
 
-        if (estimatedWait === 0 || position === 0) {
+        if (estimatedWaitSeconds === 0 || position === 0) {
           clearInterval(updateInterval);
           this.updateIntervals.delete(item.userId);
           return;
         }
 
+        const waitTimeFormatted = this.formatWaitTime(estimatedWaitSeconds);
+        const loadStatus = this.getLoadStatusText(loadPercentage);
+
         const message = `⏳ *Ожидание в очереди*\n\n` +
-          `📊 Загруженность API: ${loadPercentage.toFixed(1)}%\n` +
+          `📊 Загруженность: ${loadStatus} (${loadPercentage.toFixed(1)}%)\n` +
           `📍 Ваша позиция: ${position}\n` +
-          `⏱ Ожидаемое время: ~${estimatedWait} сек\n\n` +
-          `⏰ Ваш запрос будет обработан автоматически...`;
+          `⏱ Ожидаемое время: ${waitTimeFormatted}\n\n` +
+          `⏰ Ваш запрос будет обработан автоматически...\n\n` +
+          `Не хочется стоять в очереди? Попробуй Premium`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.url('💎 Попробуй Premium', config.tributePaymentLinkTrial)],
+        ]);
 
         await this.bot.telegram.editMessageText(
           item.chatId,
           item.queueMessageId,
           undefined,
           message,
-          { parse_mode: 'Markdown' }
+          { 
+            parse_mode: 'Markdown',
+            ...keyboard
+          }
         );
       } catch (error: any) {
         if (error.code !== 400 && !error.message?.includes('message is not modified')) {
@@ -153,31 +216,21 @@ export class QueueManager {
     }
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.processing || this.queue.length === 0) {
-      return;
+  private async processQueueItem(item: QueueItem): Promise<void> {
+    const loadPercentage = this.apiLimitMonitor.getLoadPercentage();
+    const waitTime = this.calculateWaitTime(loadPercentage);
+
+    if (waitTime > 0) {
+      const actualWait = Math.min(waitTime, 5 * 60 * 1000);
+      await new Promise(resolve => setTimeout(resolve, actualWait));
     }
 
-    this.processing = true;
-
-    while (this.queue.length > 0) {
-      const item = this.queue[0];
-      const loadPercentage = this.apiLimitMonitor.getLoadPercentage();
-      const waitTime = this.calculateWaitTime(loadPercentage);
-
-      if (waitTime > 0 && this.queue.length > 0) {
-        const actualWait = Math.min(waitTime, 5 * 60 * 1000);
-        await new Promise(resolve => setTimeout(resolve, actualWait));
-      }
-
-      const queueItem = this.queue.shift();
-      if (queueItem) {
-        await this.deleteQueueMessage(queueItem);
-        queueItem.resolve();
-      }
+    const index = this.queue.findIndex(q => q.userId === item.userId && q.timestamp === item.timestamp);
+    if (index !== -1) {
+      this.queue.splice(index, 1);
     }
 
-    this.processing = false;
+    await this.deleteQueueMessage(item);
   }
 
   getQueueLength(): number {

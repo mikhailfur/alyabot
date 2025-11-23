@@ -15,6 +15,9 @@ export class ApiLimitMonitor {
   private readonly DAILY_LIMIT_PER_KEY = 250;
   private readonly CHECK_INTERVAL_MS = 5 * 60 * 1000;
   private checkInterval: NodeJS.Timeout | null = null;
+  private onLimitChanged?: () => void;
+  private updateDebounceTimer: NodeJS.Timeout | null = null;
+  private readonly UPDATE_DEBOUNCE_MS = 10 * 1000;
 
   constructor(private freeApiKeys: string[]) {
     for (const key of freeApiKeys) {
@@ -114,6 +117,8 @@ export class ApiLimitMonitor {
       if (limit.remaining === 0) {
         limit.isExhausted = true;
       }
+      
+      this.scheduleUpdate();
     }
   }
 
@@ -123,7 +128,26 @@ export class ApiLimitMonitor {
       limit.isExhausted = true;
       limit.remaining = 0;
       limit.used = this.DAILY_LIMIT_PER_KEY;
+      
+      this.scheduleUpdate();
     }
+  }
+
+  setOnLimitChanged(callback: () => void): void {
+    this.onLimitChanged = callback;
+  }
+
+  private scheduleUpdate(): void {
+    if (this.updateDebounceTimer) {
+      clearTimeout(this.updateDebounceTimer);
+    }
+    
+    this.updateDebounceTimer = setTimeout(() => {
+      if (this.onLimitChanged) {
+        this.onLimitChanged();
+      }
+      this.updateDebounceTimer = null;
+    }, this.UPDATE_DEBOUNCE_MS);
   }
 
   getAvailableKey(): string | null {

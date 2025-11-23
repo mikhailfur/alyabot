@@ -26,6 +26,21 @@ logger.info('Бот запускается...');
 
 const bot = new Telegraf(config.telegramBotToken);
 const apiLimitMonitor = new ApiLimitMonitor(config.geminiApiKeys);
+
+let updateDescriptionTimer: NodeJS.Timeout | null = null;
+const DESCRIPTION_UPDATE_DEBOUNCE = 10 * 1000;
+
+apiLimitMonitor.setOnLimitChanged(() => {
+  if (updateDescriptionTimer) {
+    clearTimeout(updateDescriptionTimer);
+  }
+  
+  updateDescriptionTimer = setTimeout(async () => {
+    await updateBotDescription();
+    updateDescriptionTimer = null;
+  }, DESCRIPTION_UPDATE_DEBOUNCE);
+});
+
 apiLimitMonitor.startMonitoring();
 
 const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium, apiLimitMonitor);
@@ -50,7 +65,8 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
 
   const message = isApiLimit
     ? `😴 *Аля устала!*\n\n` +
-      `Все FREE API ключи исчерпали дневной лимит. Купи Premium подписку, чтобы продолжить общение без ограничений! 💪`
+      `Хм... Я сегодня очень много болтала, и очень устала... 😔\n\n` +
+      `Но если ты купишь мне "энергетик", я смогу болтать с тобой без остановки! Я буду очень рада продолжить наш разговор! 💪✨`
     : `😴 *Аля устала!*\n\n` +
       `Ты отправил(а) 30 сообщений за последний час. Мне нужно отдохнуть. Я отвечу через некоторое время, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`;
 
@@ -1222,6 +1238,11 @@ bot.on('text', async (ctx) => {
     }
 
     if (!isPremium && !isGroup) {
+      const loadPercentage = apiLimitMonitor.getLoadPercentage();
+      if (loadPercentage >= 100) {
+        await sendRateLimitMessage(ctx, true);
+        return;
+      }
       await queueManager.addToQueue(userId, chatId, userMessage);
     }
 
