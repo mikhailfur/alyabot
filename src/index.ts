@@ -14,7 +14,7 @@ import { VoiceHandler } from './voice';
 import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
-import { GeminiClient } from './gemini-client';
+import { GeminiClient, RateLimitError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
 
 dotenv.config();
@@ -29,6 +29,40 @@ const adminPanel = new AdminPanel(bot);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 const rateLimiter = new RateLimiter();
+
+async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Promise<void> {
+  const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
+  let imageExists = false;
+  try {
+    await fs.promises.access(imagePath);
+    imageExists = true;
+  } catch {
+    imageExists = false;
+  }
+
+  const message = isApiLimit
+    ? `😴 *Аля устала!*\n\n` +
+      `Мне нужно отдохнуть. Я отвечу через 30 минут, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`
+    : `😴 *Аля устала!*\n\n` +
+      `Ты отправил(а) 50 сообщений за последние 4 часа. Мне нужно отдохнуть. Я отвечу через некоторое время, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('💎 Купить Premium', 'premium')],
+  ]);
+
+  if (imageExists) {
+    await ctx.replyWithPhoto({ source: imagePath }, {
+      caption: message,
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  }
+}
 
 bot.use(async (ctx, next) => {
   try {
@@ -929,6 +963,11 @@ bot.on('photo', async (ctx) => {
         maxRetries: 3
       });
     } catch (error: any) {
+      if (error instanceof RateLimitError) {
+        console.error('Ошибка rate limit от Gemini API при обработке фото:', error);
+        await sendRateLimitMessage(ctx, true);
+        return;
+      }
       console.error('Ошибка при генерации ответа на фото через Gemini:', error);
       throw error;
     }
@@ -1009,6 +1048,11 @@ bot.on('voice', async (ctx) => {
         maxRetries: 3
       });
     } catch (error: any) {
+      if (error instanceof RateLimitError) {
+        console.error('Ошибка rate limit от Gemini API при обработке голосового:', error);
+        await sendRateLimitMessage(ctx, true);
+        return;
+      }
       console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
       throw error;
     }
@@ -1091,20 +1135,7 @@ bot.on('text', async (ctx) => {
       const limitCheck = rateLimiter.canSendMessage(userId);
       if (!limitCheck.allowed) {
         if (limitCheck.cooldownEnd) {
-          const timeRemaining = limitCheck.cooldownEnd - Date.now();
-          const timeStr = rateLimiter.formatTimeRemaining(timeRemaining);
-          await ctx.reply(
-            `⏳ *Лимит сообщений исчерпан*\n\n` +
-            `Ты отправил(а) 50 сообщений за последние 4 часа.\n\n` +
-            `⏰ Подожди ${timeStr}, чтобы продолжить общение.\n\n` +
-            `💎 Или оформи Premium подписку для безлимитного общения!`,
-            {
-              parse_mode: 'Markdown',
-              ...Markup.inlineKeyboard([
-                [Markup.button.callback('💎 Оформить Premium', 'premium')],
-              ]),
-            }
-          );
+          await sendRateLimitMessage(ctx, false);
           return;
         }
       }
@@ -1128,6 +1159,11 @@ bot.on('text', async (ctx) => {
         maxRetries: 3
       });
     } catch (error: any) {
+      if (error instanceof RateLimitError) {
+        console.error('Ошибка rate limit от Gemini API:', error);
+        await sendRateLimitMessage(ctx, true);
+        return;
+      }
       console.error('Ошибка при генерации ответа через Gemini:', error);
       throw error;
     }

@@ -7,6 +7,13 @@ interface GenerateContentOptions {
   maxRetries?: number;
 }
 
+export class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RateLimitError';
+  }
+}
+
 export class GeminiClient {
   private balancer: GeminiBalancer;
 
@@ -75,6 +82,16 @@ export class GeminiClient {
         return text;
       } catch (error: any) {
         lastError = error;
+        
+        const errorCode = error.code || error.status || error.statusCode;
+        const is429 = errorCode === 429 || 
+                     error.message?.toLowerCase().includes('429') ||
+                     error.message?.toLowerCase().includes('too many requests') ||
+                     error.message?.toLowerCase().includes('rate limit');
+        
+        if (is429 && attempt === maxRetries - 1) {
+          throw new RateLimitError('API rate limit exceeded');
+        }
         
         if (this.isRetryableError(error)) {
           const genAI = this.balancer.getToken(isPremium);
