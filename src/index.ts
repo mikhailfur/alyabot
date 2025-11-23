@@ -15,9 +15,8 @@ import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
 import { GeminiClient, RateLimitError, ProhibitedContentError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
-import { logger } from './logger';
-import { ApiLimitMonitor } from './api-limit-monitor';
 import { QueueManager } from './queue-manager';
+import { logger } from './logger';
 
 dotenv.config();
 validateConfig();
@@ -25,33 +24,15 @@ validateConfig();
 logger.info('Бот запускается...');
 
 const bot = new Telegraf(config.telegramBotToken);
-const apiLimitMonitor = new ApiLimitMonitor(config.geminiApiKeys);
-
-let updateDescriptionTimer: NodeJS.Timeout | null = null;
-const DESCRIPTION_UPDATE_DEBOUNCE = 10 * 1000;
-
-apiLimitMonitor.setOnLimitChanged(() => {
-  if (updateDescriptionTimer) {
-    clearTimeout(updateDescriptionTimer);
-  }
-  
-  updateDescriptionTimer = setTimeout(async () => {
-    await updateBotDescription();
-    updateDescriptionTimer = null;
-  }, DESCRIPTION_UPDATE_DEBOUNCE);
-});
-
-apiLimitMonitor.startMonitoring();
-
-const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium, apiLimitMonitor);
-const geminiClient = new GeminiClient(geminiBalancer, apiLimitMonitor);
+const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium);
+const geminiClient = new GeminiClient(geminiBalancer);
 
 const subscriptionManager = new SubscriptionManager(bot);
-const adminPanel = new AdminPanel(bot, apiLimitMonitor);
+const adminPanel = new AdminPanel(bot, geminiBalancer);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 const rateLimiter = new RateLimiter();
-const queueManager = new QueueManager(bot, apiLimitMonitor);
+const queueManager = new QueueManager(bot, geminiBalancer);
 
 async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Promise<void> {
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
@@ -65,8 +46,7 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
 
   const message = isApiLimit
     ? `😴 *Аля устала!*\n\n` +
-      `Хм... Я сегодня очень много болтала, и очень устала... 😔\n\n` +
-      `Но если ты купишь мне "энергетик", я смогу болтать с тобой без остановки! Я буду очень рада продолжить наш разговор! 💪✨`
+      `Мне нужно отдохнуть. Я отвечу через 30 минут, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`
     : `😴 *Аля устала!*\n\n` +
       `Ты отправил(а) 30 сообщений за последний час. Мне нужно отдохнуть. Я отвечу через некоторое время, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`;
 
@@ -1226,6 +1206,8 @@ bot.on('text', async (ctx) => {
     if (!shouldRespond) return;
 
     const isPremium = await subscriptionManager.checkUserSubscription(userId);
+    const userApiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS;
+    const shouldUseQueue = !isPremium && !isGroup && !userApiKey;
     
     if (!isPremium && !isGroup) {
       const limitCheck = rateLimiter.canSendMessage(userId);
@@ -1237,13 +1219,8 @@ bot.on('text', async (ctx) => {
       }
     }
 
-    if (!isPremium && !isGroup) {
-      const loadPercentage = apiLimitMonitor.getLoadPercentage();
-      if (loadPercentage >= 100) {
-        await sendRateLimitMessage(ctx, true);
-        return;
-      }
-      await queueManager.addToQueue(userId, chatId, userMessage);
+    if (shouldUseQueue) {
+      await queueManager.addToQueue(userId, chatId);
     }
 
     await ctx.sendChatAction('typing');
@@ -1272,6 +1249,20 @@ bot.on('text', async (ctx) => {
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API:', error);
+        if (!isPremium && !isGroup && !userApiKey) {
+          const quota = geminiBalancer.getTotalFreeQuota();
+          if (quota.remaining <= 0) {
+            await ctx.reply('😴 *Аля устала!*\n\n' +
+              'Все FREE API ключи исчерпали дневной лимит запросов. ' +
+              'Приобрети Premium подписку, чтобы продолжить общение без ограничений! 💪', {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('💎 Купить Premium', 'premium')],
+              ]),
+            });
+            return;
+          }
+        }
         await sendRateLimitMessage(ctx, true);
         return;
       }
@@ -1306,14 +1297,8 @@ bot.on('text', async (ctx) => {
       rateLimiter.recordMessage(userId);
     }
     
-  } catch (error: any) {
+  } catch (error) {
     console.error('Ошибка при генерации ответа:', error);
-    
-    if (error instanceof RateLimitError) {
-      await sendRateLimitMessage(ctx, true);
-      return;
-    }
-    
     try {
       if (userId && chatId) {
         await ctx.reply('Ой, что-то пошло не так... 😅 Попробуй еще раз!');
@@ -1413,48 +1398,41 @@ async function updateBotDescription(): Promise<void> {
   try {
     const activeUsers = await database.getActiveUsersCount(5);
     
+    // Получаем количество ошибок 429, если таблица существует
+    let error429Count = 0;
+    try {
+      error429Count = await database.getApiErrorCount('gemini_429', 3);
+    } catch (error: any) {
+      // Если таблица еще не создана, просто используем 0
+      if (error.code === 'ER_NO_SUCH_TABLE') {
+        logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
+        error429Count = 0;
+      } else {
+        logger.warn('Ошибка при получении количества ошибок 429', error);
+      }
+    }
+    
     let loadStatus = '🟢';
     let loadText = 'Низкая';
-    let loadPercentage = 0;
     
-    if (apiLimitMonitor) {
-      loadPercentage = apiLimitMonitor.getLoadPercentage();
-      
-      if (loadPercentage >= 80) {
-        loadStatus = '🔴';
-        loadText = 'Повышенная';
-      } else if (loadPercentage >= 40) {
-        loadStatus = '🟡';
-        loadText = 'Средняя';
-      }
-    } else {
-      let error429Count = 0;
-      try {
-        error429Count = await database.getApiErrorCount('gemini_429', 3);
-      } catch (error: any) {
-        if (error.code === 'ER_NO_SUCH_TABLE') {
-          logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
-          error429Count = 0;
-        } else {
-          logger.warn('Ошибка при получении количества ошибок 429', error);
-        }
-      }
-      
-      if (activeUsers >= 20) {
-        loadStatus = '🔴';
-        loadText = 'Повышенная';
-      } else if (activeUsers >= 10) {
-        loadStatus = '🟡';
-        loadText = 'Средняя';
-      }
-      
-      if (error429Count >= 8) {
-        loadStatus = '🔴';
-        loadText = 'Повышенная';
-      } else if (error429Count > 3 && loadStatus !== '🔴') {
-        loadStatus = '🟡';
-        loadText = 'Средняя';
-      }
+    // Определяем загруженность на основе количества пользователей
+    if (activeUsers >= 20) {
+      loadStatus = '🔴';
+      loadText = 'Повышенная';
+    } else if (activeUsers >= 10) {
+      loadStatus = '🟡';
+      loadText = 'Средняя';
+    }
+    
+    // Учитываем ошибки 429 от Gemini API за последние 3 часа
+    // Если более 8 ошибок - повышенная загруженность
+    // Если более 3 ошибок - средняя загруженность
+    if (error429Count >= 8) {
+      loadStatus = '🔴';
+      loadText = 'Повышенная';
+    } else if (error429Count > 3 && loadStatus !== '🔴') {
+      loadStatus = '🟡';
+      loadText = 'Средняя';
     }
     
     const shortDescription = `💬 Общается: ${activeUsers} чел. | ${loadStatus} ${loadText}`;
@@ -1468,7 +1446,7 @@ async function updateBotDescription(): Promise<void> {
     
     await bot.telegram.setMyShortDescription(shortDescription);
     await bot.telegram.setMyDescription(fullDescription);
-    logger.debug('Описание бота обновлено', { activeUsers, loadPercentage, loadText });
+    logger.debug('Описание бота обновлено', { activeUsers, error429Count, loadText });
   } catch (error) {
     logger.error('Ошибка при обновлении описания бота', error);
   }
@@ -1480,12 +1458,21 @@ cron.schedule('* * * * *', async () => {
   timezone: 'Europe/Moscow'
 });
 
-cron.schedule('0 0 * * *', async () => {
-  apiLimitMonitor.resetDailyLimits();
-  logger.info('Дневные лимиты API сброшены');
-}, {
-  timezone: 'America/Los_Angeles'
+const checkQuota = async () => {
+  try {
+    await geminiBalancer.checkAllFreeTokensQuota();
+    const stats = geminiBalancer.getStats();
+    logger.info('Проверка лимитов FREE API ключей завершена', stats.freeQuota);
+  } catch (error) {
+    logger.error('Ошибка при проверке лимитов API ключей', error);
+  }
+};
+
+cron.schedule('*/5 * * * *', checkQuota, {
+  timezone: 'Europe/Moscow'
 });
+
+checkQuota();
 
 updateBotDescription();
 
@@ -1496,14 +1483,14 @@ logger.info('Бот Аля запущен! 🤖');
 process.once('SIGINT', async () => {
   logger.info('Завершение работы бота... (SIGINT)');
   subscriptionManager.stopPeriodicCheck();
-  apiLimitMonitor.stopMonitoring();
+  queueManager.stop();
   await database.close();
   bot.stop('SIGINT');
 });
 process.once('SIGTERM', async () => {
   logger.info('Завершение работы бота... (SIGTERM)');
   subscriptionManager.stopPeriodicCheck();
-  apiLimitMonitor.stopMonitoring();
+  queueManager.stop();
   await database.close();
   bot.stop('SIGTERM');
 });

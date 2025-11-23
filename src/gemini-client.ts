@@ -26,11 +26,9 @@ export class ProhibitedContentError extends Error {
 
 export class GeminiClient {
   private balancer: GeminiBalancer;
-  private apiLimitMonitor?: any;
 
-  constructor(balancer: GeminiBalancer, apiLimitMonitor?: any) {
+  constructor(balancer: GeminiBalancer) {
     this.balancer = balancer;
-    this.apiLimitMonitor = apiLimitMonitor;
   }
 
   private isRetryableError(error: any): boolean {
@@ -95,7 +93,18 @@ export class GeminiClient {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const genAI = this.balancer.getToken(isPremium);
+        let genAI: GoogleGenerativeAI;
+        
+        if (!isPremium) {
+          const freeToken = (this.balancer as any).getFreeTokenWithQuota();
+          if (!freeToken) {
+            throw new RateLimitError('Все FREE API ключи исчерпали лимит');
+          }
+          genAI = freeToken;
+        } else {
+          genAI = this.balancer.getToken(isPremium);
+        }
+        
         const safetySettings = this.getSafetySettings(behaviorMode);
         const modelConfig: any = { model: 'gemini-2.5-flash' };
         if (safetySettings.length > 0) {
@@ -112,6 +121,10 @@ export class GeminiClient {
         const response = await result.response;
         const text = response.text();
 
+        if (tokenKey && !isPremium) {
+          this.balancer.decrementQuota(tokenKey, false);
+        }
+
         return text;
       } catch (error: any) {
         lastError = error;
@@ -125,69 +138,49 @@ export class GeminiClient {
         const is429 = errorCode === 429 || 
                      error.message?.toLowerCase().includes('429') ||
                      error.message?.toLowerCase().includes('too many requests') ||
-                     error.message?.toLowerCase().includes('rate limit');
+                     error.message?.toLowerCase().includes('rate limit') ||
+                     error.message?.toLowerCase().includes('quota exceeded');
         
         if (is429) {
+          const tokenKey = this.getTokenKey((this.balancer as any).getToken(isPremium), isPremium);
+          if (tokenKey && !isPremium) {
+            this.balancer.markTokenQuotaExhausted(tokenKey, false);
+          }
+          
           try {
             await database.recordApiError('gemini_429', 429);
             logger.warn('Записана ошибка 429 от Gemini API', { attempt: attempt + 1, maxRetries });
           } catch (dbError) {
             logger.error('Ошибка при записи ошибки 429 в базу данных', dbError);
           }
-        }
-        
-        if (is429) {
-          const genAI = this.balancer.getToken(isPremium);
-          const tokenKey = this.getTokenKey(genAI, isPremium);
-          
-          if (tokenKey && !isPremium && this.apiLimitMonitor) {
-            this.apiLimitMonitor.markKeyExhausted(tokenKey);
-            logger.warn('Ключ API исчерпал лимит (429)', { key: tokenKey.substring(0, 10) + '...' });
-          }
           
           if (!isPremium) {
-            const availableKey = this.balancer.getAvailableFreeKey();
-            if (!availableKey) {
-              if (attempt === maxRetries - 1) {
-                try {
-                  await database.recordApiError('gemini_429', 429);
-                  logger.warn('Все FREE ключи исчерпали лимит', { attempt: attempt + 1, maxRetries });
-                } catch (dbError) {
-                  logger.error('Ошибка при записи ошибки 429 в базу данных', dbError);
-                }
-                throw new RateLimitError('API rate limit exceeded');
-              }
-            } else {
-              if (tokenKey) {
-                logger.warn(`Ошибка 429, переключаюсь на доступный ключ`, { 
-                  attempt: attempt + 1, 
-                  maxRetries,
-                  oldKey: tokenKey.substring(0, 10) + '...',
-                  newKey: availableKey.substring(0, 10) + '...'
-                });
-                this.balancer.markTokenUnavailable(tokenKey, isPremium);
-                usedTokens.add(tokenKey);
-                
-                if (attempt < maxRetries - 1) {
-                  await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-                  continue;
-                }
-              }
+            const freeToken = (this.balancer as any).getFreeTokenWithQuota();
+            if (!freeToken) {
+              throw new RateLimitError('Все FREE API ключи исчерпали лимит');
             }
-          } else {
-            if (attempt === maxRetries - 1) {
-              throw new RateLimitError('API rate limit exceeded');
+            
+            if (attempt < maxRetries - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+              continue;
             }
           }
         }
         
-        if (this.isRetryableError(error) && !is429) {
+        if (is429 && attempt === maxRetries - 1) {
+          throw new RateLimitError('API rate limit exceeded');
+        }
+        
+        if (this.isRetryableError(error)) {
           const genAI = this.balancer.getToken(isPremium);
           const tokenKey = this.getTokenKey(genAI, isPremium);
           
           if (tokenKey) {
-            logger.warn(`Ошибка перегрузки API (попытка ${attempt + 1}/${maxRetries}), пробую другой токен...`);
+            console.log(`⚠️ Ошибка перегрузки API (попытка ${attempt + 1}/${maxRetries}), пробую другой токен...`);
             this.balancer.markTokenUnavailable(tokenKey, isPremium);
+            if (!isPremium) {
+              this.balancer.markTokenQuotaExhausted(tokenKey, false);
+            }
             usedTokens.add(tokenKey);
             
             if (attempt < maxRetries - 1) {

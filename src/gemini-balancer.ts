@@ -1,5 +1,4 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { ApiLimitMonitor } from './api-limit-monitor';
 
 interface TokenInstance {
   api: GoogleGenerativeAI;
@@ -8,15 +7,17 @@ interface TokenInstance {
   lastUsed: number;
   requestCount: number;
   isAvailable: boolean;
+  dailyLimit: number;
+  remainingQuota: number;
+  lastQuotaCheck: number;
+  quotaExhausted: boolean;
 }
 
 export class GeminiBalancer {
   private freeTokens: TokenInstance[] = [];
   private premiumTokens: TokenInstance[] = [];
-  private apiLimitMonitor?: ApiLimitMonitor;
 
-  constructor(freeApiKeys: string[], premiumApiKeys: string[] = [], apiLimitMonitor?: ApiLimitMonitor) {
-    this.apiLimitMonitor = apiLimitMonitor;
+  constructor(freeApiKeys: string[], premiumApiKeys: string[] = []) {
     this.freeTokens = freeApiKeys.map(key => ({
       api: new GoogleGenerativeAI(key),
       key,
@@ -24,6 +25,10 @@ export class GeminiBalancer {
       lastUsed: 0,
       requestCount: 0,
       isAvailable: true,
+      dailyLimit: 250,
+      remainingQuota: 250,
+      lastQuotaCheck: 0,
+      quotaExhausted: false,
     }));
 
     this.premiumTokens = premiumApiKeys.map(key => ({
@@ -33,6 +38,10 @@ export class GeminiBalancer {
       lastUsed: 0,
       requestCount: 0,
       isAvailable: true,
+      dailyLimit: Infinity,
+      remainingQuota: Infinity,
+      lastQuotaCheck: 0,
+      quotaExhausted: false,
     }));
 
     if (this.freeTokens.length === 0) {
@@ -40,60 +49,54 @@ export class GeminiBalancer {
     }
   }
 
-  private getNextToken(tokens: TokenInstance[], isPremium: boolean = false): TokenInstance {
+  private getNextToken(tokens: TokenInstance[]): TokenInstance {
     if (tokens.length === 0) {
       throw new Error('Нет доступных токенов');
     }
 
-    if (!isPremium && this.apiLimitMonitor) {
-      const availableKey = this.apiLimitMonitor.getAvailableKey();
-      if (availableKey) {
-        const token = tokens.find(t => t.key === availableKey);
-        if (token && token.isAvailable) {
-          token.lastUsed = Date.now();
-          token.requestCount++;
-          this.apiLimitMonitor.recordUsage(availableKey);
-          return token;
-        }
-      }
-    }
-
-    const availableTokens = tokens.filter(t => {
-      if (!t.isAvailable) return false;
-      if (!isPremium && this.apiLimitMonitor) {
-        const keyStatus = this.apiLimitMonitor.getKeyStatus(t.key);
-        return keyStatus && !keyStatus.isExhausted && keyStatus.remaining > 0;
-      }
-      return true;
-    });
-
+    const availableTokens = tokens.filter(t => t.isAvailable && !t.quotaExhausted);
     if (availableTokens.length === 0) {
+      const allExhausted = tokens.filter(t => t.quotaExhausted);
+      if (allExhausted.length === tokens.length) {
+        throw new Error('Все токены исчерпали лимит');
+      }
       tokens.forEach(t => t.isAvailable = true);
-      return this.selectBestToken(tokens);
+      const notExhausted = tokens.filter(t => !t.quotaExhausted);
+      if (notExhausted.length === 0) {
+        throw new Error('Все токены исчерпали лимит');
+      }
+      return this.selectBestToken(notExhausted);
     }
 
-    const selected = this.selectBestToken(availableTokens);
-    if (!isPremium && this.apiLimitMonitor) {
-      this.apiLimitMonitor.recordUsage(selected.key);
-    }
-    return selected;
+    return this.selectBestToken(availableTokens);
   }
 
   private selectBestToken(tokens: TokenInstance[]): TokenInstance {
-    if (tokens.length === 1) {
-      const token = tokens[0];
+    const availableTokens = tokens.filter(t => !t.quotaExhausted && t.isAvailable);
+    
+    if (availableTokens.length === 0) {
+      const allExhausted = tokens.filter(t => t.quotaExhausted);
+      if (allExhausted.length > 0) {
+        throw new Error('Все токены исчерпали лимит');
+      }
+      return tokens[0];
+    }
+
+    if (availableTokens.length === 1) {
+      const token = availableTokens[0];
       token.lastUsed = Date.now();
       token.requestCount++;
       return token;
     }
 
     const now = Date.now();
-    let bestToken = tokens[0];
+    let bestToken = availableTokens[0];
     let bestScore = Infinity;
 
-    for (const token of tokens) {
+    for (const token of availableTokens) {
       const timeSinceLastUse = now - token.lastUsed;
-      const score = token.requestCount * 1000 - timeSinceLastUse;
+      const quotaScore = (token.dailyLimit - token.remainingQuota) * 10;
+      const score = token.requestCount * 1000 - timeSinceLastUse + quotaScore;
       
       if (score < bestScore) {
         bestScore = score;
@@ -107,7 +110,7 @@ export class GeminiBalancer {
   }
 
   getFreeToken(): GoogleGenerativeAI {
-    const token = this.getNextToken(this.freeTokens, false);
+    const token = this.getNextToken(this.freeTokens);
     return token.api;
   }
 
@@ -116,7 +119,7 @@ export class GeminiBalancer {
       return this.getFreeToken();
     }
     
-    const token = this.getNextToken(this.premiumTokens, true);
+    const token = this.getNextToken(this.premiumTokens);
     return token.api;
   }
 
@@ -135,27 +138,106 @@ export class GeminiBalancer {
     }
   }
 
-  getAvailableFreeKey(): string | null {
-    if (!this.apiLimitMonitor) {
-      return this.freeTokens.find(t => t.isAvailable)?.key || null;
+  async checkQuotaForToken(token: TokenInstance): Promise<void> {
+    if (token.isPremium) {
+      token.remainingQuota = Infinity;
+      token.quotaExhausted = false;
+      token.lastQuotaCheck = Date.now();
+      return;
     }
-    return this.apiLimitMonitor.getAvailableKey();
+
+    const now = Date.now();
+    const dayStart = new Date(now).setHours(0, 0, 0, 0);
+    const lastCheckDay = new Date(token.lastQuotaCheck).setHours(0, 0, 0, 0);
+    
+    if (dayStart !== lastCheckDay) {
+      token.requestCount = 0;
+      token.remainingQuota = token.dailyLimit;
+      token.quotaExhausted = false;
+    }
+
+    const estimatedUsed = token.requestCount;
+    const estimated = Math.max(0, token.dailyLimit - estimatedUsed);
+    token.remainingQuota = estimated;
+    
+    if (token.remainingQuota <= 0) {
+      token.quotaExhausted = true;
+    } else {
+      token.quotaExhausted = false;
+    }
+    
+    token.lastQuotaCheck = Date.now();
   }
 
-  hasAvailableFreeKeys(): boolean {
-    if (!this.apiLimitMonitor) {
-      return this.freeTokens.some(t => t.isAvailable);
-    }
-    return this.apiLimitMonitor.getAvailableKey() !== null;
+  async checkAllFreeTokensQuota(): Promise<void> {
+    const promises = this.freeTokens.map(token => this.checkQuotaForToken(token));
+    await Promise.all(promises);
   }
 
-  getStats(): { free: number; premium: number; freeRequests: number; premiumRequests: number } {
+  getFreeTokenWithQuota(): GoogleGenerativeAI | null {
+    const availableTokens = this.freeTokens.filter(t => !t.quotaExhausted && t.isAvailable);
+    if (availableTokens.length === 0) {
+      return null;
+    }
+    const token = this.selectBestToken(availableTokens);
+    return token.api;
+  }
+
+  getTotalFreeQuota(): { total: number; remaining: number; used: number; percentage: number } {
+    const totalLimit = this.freeTokens.length * 250;
+    const remaining = this.freeTokens.reduce((sum, t) => sum + Math.max(0, t.remainingQuota), 0);
+    const used = totalLimit - remaining;
+    const percentage = totalLimit > 0 ? (used / totalLimit) * 100 : 0;
+    
+    return {
+      total: totalLimit,
+      remaining,
+      used,
+      percentage: Math.min(100, Math.max(0, percentage)),
+    };
+  }
+
+  getStats(): { free: number; premium: number; freeRequests: number; premiumRequests: number; freeQuota: { total: number; remaining: number; used: number; percentage: number } } {
     return {
       free: this.freeTokens.length,
       premium: this.premiumTokens.length,
       freeRequests: this.freeTokens.reduce((sum, t) => sum + t.requestCount, 0),
       premiumRequests: this.premiumTokens.reduce((sum, t) => sum + t.requestCount, 0),
+      freeQuota: this.getTotalFreeQuota(),
     };
+  }
+
+  markTokenQuotaExhausted(key: string, isPremium: boolean): void {
+    const tokens = isPremium ? this.premiumTokens : this.freeTokens;
+    const token = tokens.find(t => t.key === key);
+    if (token) {
+      token.quotaExhausted = true;
+      token.remainingQuota = 0;
+    }
+  }
+
+  decrementQuota(key: string, isPremium: boolean): void {
+    const tokens = isPremium ? this.premiumTokens : this.freeTokens;
+    const token = tokens.find(t => t.key === key);
+    if (token && !token.isPremium) {
+      const now = Date.now();
+      const dayStart = new Date(now).setHours(0, 0, 0, 0);
+      const lastUsedDay = new Date(token.lastUsed).setHours(0, 0, 0, 0);
+      
+      if (dayStart !== lastUsedDay) {
+        token.requestCount = 0;
+        token.remainingQuota = token.dailyLimit;
+        token.quotaExhausted = false;
+      }
+      
+      token.requestCount++;
+      const estimated = Math.max(0, token.dailyLimit - token.requestCount);
+      token.remainingQuota = estimated;
+      
+      if (token.remainingQuota <= 0) {
+        token.quotaExhausted = true;
+      }
+    }
   }
 }
 
