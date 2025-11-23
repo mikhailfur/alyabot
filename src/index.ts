@@ -1484,7 +1484,7 @@ cron.schedule('0 0 * * *', async () => {
   apiLimitMonitor.resetDailyLimits();
   logger.info('Дневные лимиты API сброшены');
 }, {
-  timezone: 'Europe/Moscow'
+  timezone: 'America/Los_Angeles'
 });
 
 updateBotDescription();

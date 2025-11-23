@@ -37,10 +37,14 @@ export class ApiLimitMonitor {
       clearInterval(this.checkInterval);
     }
 
-    this.checkAllLimits();
+    this.checkAllLimits().catch(error => {
+      logger.error('Ошибка при первоначальной проверке лимитов', error);
+    });
     
     this.checkInterval = setInterval(() => {
-      this.checkAllLimits();
+      this.checkAllLimits().catch(error => {
+        logger.error('Ошибка при проверке лимитов', error);
+      });
     }, this.CHECK_INTERVAL_MS);
 
     logger.info('Мониторинг лимитов API запущен', { 
@@ -57,52 +61,88 @@ export class ApiLimitMonitor {
   }
 
   private async checkAllLimits(): Promise<void> {
-    const promises = this.freeApiKeys.map(key => this.checkKeyLimit(key));
-    await Promise.allSettled(promises);
+    logger.debug('Начало проверки лимитов всех ключей', { keysCount: this.freeApiKeys.length });
+    
+    for (const key of this.freeApiKeys) {
+      await this.checkKeyLimit(key);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    logger.debug('Проверка лимитов завершена', { 
+      exhausted: Array.from(this.freeKeyLimits.values()).filter(l => l.isExhausted).length,
+      available: Array.from(this.freeKeyLimits.values()).filter(l => !l.isExhausted).length
+    });
   }
 
   private async checkKeyLimit(key: string): Promise<void> {
-    try {
-      const genAI = new GoogleGenerativeAI(key);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      
-      const testPrompt = 'test';
-      const result = await model.generateContent([testPrompt]);
-      await result.response;
+    const limit = this.freeKeyLimits.get(key);
+    if (!limit) return;
 
-      const limit = this.freeKeyLimits.get(key);
-      if (limit) {
-        limit.lastChecked = Date.now();
-        if (limit.remaining === 0) {
-          limit.isExhausted = true;
-        } else {
-          limit.isExhausted = false;
-        }
-      }
-    } catch (error: any) {
-      const errorCode = error.code || error.status || error.statusCode;
-      const errorMessage = error.message?.toLowerCase() || '';
-      
-      const is429 = errorCode === 429 || 
-                   errorMessage.includes('429') ||
-                   errorMessage.includes('too many requests') ||
-                   errorMessage.includes('rate limit') ||
-                   errorMessage.includes('quota exceeded');
+    limit.lastChecked = Date.now();
 
-      const limit = this.freeKeyLimits.get(key);
-      if (limit) {
-        limit.lastChecked = Date.now();
+    if (limit.used >= this.DAILY_LIMIT_PER_KEY) {
+      limit.isExhausted = true;
+      limit.remaining = 0;
+      logger.debug('Ключ исчерпан по счетчику', { key: key.substring(0, 10) + '...', used: limit.used });
+      
+      try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         
+        const testPrompt = 'test';
+        const result = await model.generateContent([testPrompt]);
+        await result.response;
+
+        limit.isExhausted = false;
+        limit.used = 0;
+        limit.remaining = this.DAILY_LIMIT_PER_KEY;
+        logger.info('Ключ API снова доступен (лимит сброшен)', { key: key.substring(0, 10) + '...' });
+      } catch (error: any) {
+        const errorCode = error.code || error.status || error.statusCode;
+        const errorMessage = error.message?.toLowerCase() || '';
+        
+        const is429 = errorCode === 429 || 
+                     errorMessage.includes('429') ||
+                     errorMessage.includes('too many requests') ||
+                     errorMessage.includes('rate limit') ||
+                     errorMessage.includes('quota exceeded');
+
         if (is429) {
           limit.isExhausted = true;
           limit.remaining = 0;
-          logger.warn('Ключ API исчерпал лимит', { key: key.substring(0, 10) + '...' });
-        } else {
-          if (limit.remaining === 0) {
-            limit.isExhausted = true;
-          } else {
-            limit.isExhausted = false;
-          }
+          limit.used = this.DAILY_LIMIT_PER_KEY;
+          logger.warn('Ключ API все еще исчерпан (429)', { key: key.substring(0, 10) + '...' });
+        }
+      }
+      return;
+    }
+
+    if (limit.isExhausted && limit.used < this.DAILY_LIMIT_PER_KEY) {
+      try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        
+        const testPrompt = 'test';
+        const result = await model.generateContent([testPrompt]);
+        await result.response;
+
+        limit.isExhausted = false;
+        logger.info('Ключ API снова доступен', { key: key.substring(0, 10) + '...', remaining: limit.remaining });
+      } catch (error: any) {
+        const errorCode = error.code || error.status || error.statusCode;
+        const errorMessage = error.message?.toLowerCase() || '';
+        
+        const is429 = errorCode === 429 || 
+                     errorMessage.includes('429') ||
+                     errorMessage.includes('too many requests') ||
+                     errorMessage.includes('rate limit') ||
+                     errorMessage.includes('quota exceeded');
+
+        if (is429) {
+          limit.isExhausted = true;
+          limit.remaining = 0;
+          limit.used = this.DAILY_LIMIT_PER_KEY;
+          logger.warn('Ключ API исчерпал лимит (429)', { key: key.substring(0, 10) + '...' });
         }
       }
     }
