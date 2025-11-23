@@ -1,3 +1,4 @@
+import './instrument';
 import { Telegraf, Markup } from 'telegraf';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as dotenv from 'dotenv';
@@ -16,9 +17,12 @@ import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
 import { GeminiClient, RateLimitError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
+import { logger } from './logger';
 
 dotenv.config();
 validateConfig();
+
+logger.info('Бот запускается...');
 
 const bot = new Telegraf(config.telegramBotToken);
 const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium);
@@ -68,7 +72,7 @@ bot.use(async (ctx, next) => {
   try {
     await next();
   } catch (error: any) {
-    console.error('Ошибка в обработчике:', error);
+    logger.error('Ошибка в обработчике', error, { userId: ctx.from?.id, chatId: ctx.chat?.id });
     try {
       if (ctx.callbackQuery) {
         await ctx.answerCbQuery('❌ Произошла ошибка', { show_alert: false });
@@ -77,7 +81,7 @@ bot.use(async (ctx, next) => {
         await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.');
       }
     } catch (replyError) {
-      console.error('Ошибка при отправке сообщения об ошибке:', replyError);
+      logger.error('Ошибка при отправке сообщения об ошибке', replyError);
     }
   }
 });
@@ -91,7 +95,7 @@ async function checkAdminStatus(ctx: any): Promise<boolean> {
     const chatMember = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
     return chatMember.status === 'administrator' || chatMember.status === 'creator';
   } catch (error) {
-    console.error('Ошибка при проверке статуса администратора:', error);
+    logger.error('Ошибка при проверке статуса администратора', error);
     return false;
   }
 }
@@ -113,11 +117,11 @@ bot.start(async (ctx) => {
   let referralCode: string | undefined;
   const startParam = ctx.startPayload || ctx.message.text?.split(' ')[1];
   
-  console.log('Start command received, payload:', startParam, 'userId:', userId);
+  logger.userAction(userId, 'Команда /start', { payload: startParam });
   
   if (startParam && (startParam.startsWith('ref_') || startParam.startsWith('ref'))) {
     let extractedCode = startParam.replace(/^ref_?/, '');
-    console.log('Referral code extracted (raw):', extractedCode);
+    logger.debug('Извлечение реферального кода', { extractedCode, userId });
     
     try {
       let link = await database.getReferralLink(extractedCode);
@@ -126,14 +130,20 @@ bot.start(async (ctx) => {
         link = await database.findReferralLinkByNormalizedCode(extractedCode);
         if (link) {
           extractedCode = link.code;
-          console.log('Found link by normalized comparison, actual code:', link.code);
+          logger.debug('Найден реферальный код по нормализованному сравнению', { actualCode: link.code, userId });
         }
       }
       
       referralCode = link ? link.code : undefined;
-      console.log('Referral link found:', link ? { id: link.id, name: link.name, is_active: link.is_active, code: link.code } : 'NOT FOUND');
+      logger.info('Реферальная ссылка найдена', { 
+        found: !!link, 
+        linkId: link?.id, 
+        linkName: link?.name, 
+        code: link?.code,
+        userId 
+      });
     } catch (error) {
-      console.error('Error finding referral link:', error);
+      logger.error('Ошибка при поиске реферальной ссылки', error, { extractedCode, userId });
       referralCode = undefined;
     }
   }
@@ -151,10 +161,10 @@ bot.start(async (ctx) => {
       const link = await database.getReferralLink(referralCode);
       if (link && link.is_active) {
         await database.trackReferralClick(referralCode, userId);
-        console.log('Referral click tracked for code:', referralCode, 'userId:', userId);
+        logger.info('Отслежен переход по реферальной ссылке', { code: referralCode, userId });
       }
     } catch (error) {
-      console.error('Error tracking referral click:', error);
+      logger.error('Ошибка при отслеживании перехода по реферальной ссылке', error, { code: referralCode, userId });
     }
   }
 
@@ -382,15 +392,13 @@ bot.command('memory', async (ctx) => {
 });
 
 bot.command('clear', async (ctx) => {
-  console.log('Команда /clear вызвана');
+    logger.userAction(ctx.from?.id || 0, 'Команда /clear');
   try {
     const userId = ctx.from?.id;
     const chatId = ctx.chat?.id;
     
-    console.log('User ID:', userId, 'Chat ID:', chatId);
-    
     if (!userId || !chatId) {
-      console.log('Ошибка: userId или chatId не определены');
+      logger.warn('Не удалось определить userId или chatId для команды /clear');
       await ctx.reply('Не удалось определить пользователя или чат.');
       return;
     }
@@ -400,28 +408,26 @@ bot.command('clear', async (ctx) => {
     if (isGroup) {
       const isAdmin = await checkAdminStatus(ctx);
       if (!isAdmin) {
+        logger.warn('Попытка очистки истории группы не администратором', { userId, chatId });
         await ctx.reply('Только администраторы могут очищать историю в группах!');
         return;
       }
     }
 
-    console.log('Начинаю очистку истории, isGroup:', isGroup);
+    logger.userAction(userId, 'Очистка истории', { isGroup, chatId });
     await ctx.sendChatAction('typing');
 
     if (isGroup) {
-      console.log('Очищаю историю группы:', chatId);
       await database.clearGroupHistory(chatId);
-      console.log('История группы очищена');
+      logger.info('История группы очищена', { chatId });
       await ctx.reply('✅ История общения группы очищена! Начнем с чистого листа 😊');
     } else {
-      console.log('Очищаю историю чата для пользователя:', userId, 'в чате:', chatId);
       await database.clearChatHistory(userId, chatId);
-      console.log('История чата очищена');
+      logger.info('История чата очищена', { userId, chatId });
       await ctx.reply('✅ История общения очищена! Начнем с чистого листа 😊');
     }
-    console.log('Команда /clear выполнена успешно');
   } catch (error) {
-    console.error('Ошибка при очистке истории:', error);
+    logger.error('Ошибка при очистке истории', error, { userId: ctx.from?.id, chatId: ctx.chat?.id });
     try {
       await ctx.reply('❌ Не могу очистить историю 😅');
     } catch (e) {
@@ -1289,16 +1295,16 @@ scheduleNextBroadcast();
 
 bot.launch();
 
-console.log('Бот Аля запущен! 🤖');
+logger.info('Бот Аля запущен! 🤖');
 
 process.once('SIGINT', async () => {
-  console.log('Завершение работы бота...');
+  logger.info('Завершение работы бота... (SIGINT)');
   subscriptionManager.stopPeriodicCheck();
   await database.close();
   bot.stop('SIGINT');
 });
 process.once('SIGTERM', async () => {
-  console.log('Завершение работы бота...');
+  logger.info('Завершение работы бота... (SIGTERM)');
   subscriptionManager.stopPeriodicCheck();
   await database.close();
   bot.stop('SIGTERM');

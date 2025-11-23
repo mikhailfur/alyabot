@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise';
 import { config } from './config';
+import { logger } from './logger';
 
 export interface ChatMessage {
   id?: number;
@@ -325,7 +326,7 @@ class Database {
       }
       
       await this.pool.execute(sql, params);
-      console.log(`Очищена история для пользователя ${userId} в чате ${chatId}`);
+      logger.databaseAction('Очищена история чата', { userId, chatId });
     } catch (error) {
       console.error('Ошибка при очистке истории чата:', error);
       throw error;
@@ -385,30 +386,15 @@ class Database {
   async createOrUpdateUser(userId: number, username?: string, firstName?: string, lastName?: string, referralSource?: string): Promise<void> {
     const timestamp = Date.now();
     
-    const existingUser = await this.getUser(userId);
-    
-    if (existingUser) {
-      const sql = `
-        UPDATE users 
-        SET username = ?, first_name = ?, last_name = ?, last_active = ?
-        WHERE user_id = ?
-      `;
-      await this.pool.execute(sql, [
-        username || null,
-        firstName || null,
-        lastName || null,
-        timestamp,
-        userId
-      ]);
-      
-      if (referralSource && !existingUser.referral_source) {
-        await this.setUserReferralSource(userId, referralSource);
-        await this.trackReferralRegistration(referralSource, userId);
-      }
-    } else {
+    try {
       const sql = `
         INSERT INTO users (user_id, username, first_name, last_name, created_at, last_active, is_premium, subscription_until, behavior_mode, model_type, total_messages, trial_used, referral_source)
         VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 'default', NULL, 0, 0, ?)
+        ON DUPLICATE KEY UPDATE
+          username = VALUES(username),
+          first_name = VALUES(first_name),
+          last_name = VALUES(last_name),
+          last_active = VALUES(last_active)
       `;
       await this.pool.execute(sql, [
         userId,
@@ -420,8 +406,41 @@ class Database {
         referralSource || null
       ]);
       
-      if (referralSource) {
+      logger.databaseAction('Создан/обновлен пользователь', { userId, username, referralSource });
+      
+      const existingUser = await this.getUser(userId);
+      if (referralSource && existingUser && !existingUser.referral_source) {
+        await this.setUserReferralSource(userId, referralSource);
         await this.trackReferralRegistration(referralSource, userId);
+      } else if (referralSource && !existingUser) {
+        await this.trackReferralRegistration(referralSource, userId);
+      }
+    } catch (error: any) {
+      if (error.code === 'ER_DUP_ENTRY') {
+        logger.warn('Обнаружен дубликат пользователя, выполняю обновление', { userId, error: error.message });
+        const updateSql = `
+          UPDATE users 
+          SET username = ?, first_name = ?, last_name = ?, last_active = ?
+          WHERE user_id = ?
+        `;
+        await this.pool.execute(updateSql, [
+          username || null,
+          firstName || null,
+          lastName || null,
+          timestamp,
+          userId
+        ]);
+        
+        logger.databaseAction('Пользователь обновлен после дубликата', { userId });
+        
+        const existingUser = await this.getUser(userId);
+        if (referralSource && existingUser && !existingUser.referral_source) {
+          await this.setUserReferralSource(userId, referralSource);
+          await this.trackReferralRegistration(referralSource, userId);
+        }
+      } else {
+        logger.error('Ошибка при создании/обновлении пользователя', error, { userId, username });
+        throw error;
       }
     }
   }
@@ -583,11 +602,11 @@ class Database {
     try {
       const link = await this.getReferralLink(code);
       if (!link) {
-        console.error('Referral link not found for code:', code);
+        logger.error('Реферальная ссылка не найдена', undefined, { code });
         return;
       }
 
-      console.log('Tracking referral click - code:', code, 'userId:', userId, 'current clicks:', link.clicks);
+      logger.databaseAction('Отслеживание перехода по реферальной ссылке', { code, userId, currentClicks: link.clicks });
       
       await this.pool.execute('UPDATE referral_links SET clicks = clicks + 1 WHERE code = ?', [code]);
       
@@ -599,16 +618,16 @@ class Database {
       `;
       try {
         await this.pool.execute(sql, [code, userId, clickedAt]);
-        console.log('Referral click inserted/updated in tracking table');
+        logger.databaseAction('Переход по реферальной ссылке добавлен/обновлен в tracking', { code, userId });
       } catch (e: any) {
-        console.error('Error inserting referral tracking:', e.message);
+        logger.error('Ошибка при вставке referral tracking', e, { code, userId });
         const updateSql = `
           UPDATE referral_tracking 
           SET clicked_at = ? 
           WHERE referral_code = ? AND user_id = ?
         `;
         await this.pool.execute(updateSql, [clickedAt, code, userId]);
-        console.log('Referral click updated in tracking table (fallback)');
+        logger.databaseAction('Переход по реферальной ссылке обновлен (fallback)', { code, userId });
       }
     } catch (error) {
       console.error('Error in trackReferralClick:', error);
@@ -679,7 +698,8 @@ class Database {
         return true;
       }
       
-      console.log(`Неожиданная ошибка при проверке пользователя ${userId}:`, {
+      logger.warn('Неожиданная ошибка при проверке пользователя', {
+        userId,
         code: errorCode,
         description: errorDescription
       });
