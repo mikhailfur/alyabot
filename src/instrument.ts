@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/node';
 
 Sentry.init({
-  dsn: 'https://8f61e58fca2f3f16299cabd3021f9a89@o4510412867633152.ingest.de.sentry.io/4510412869206096',
+  dsn: 'https://1029b6aadbc4c48bad9940fe99324ad3@o4510412867633152.ingest.de.sentry.io/4510412885196880',
   sendDefaultPii: true,
   environment: process.env.NODE_ENV || 'production',
   tracesSampleRate: 1.0,
