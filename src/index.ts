@@ -70,8 +70,7 @@ async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium:
   if (behaviorMode === 'nsfw') {
     const message = `Ваш запрос нарушает условия использования сервиса.\n` +
       `Аля не может общаться на подобные темы. Ведь она всего лишь хорошая девочка и не может знать о таких вещах.\n\n` +
-      `Пожалуйста, ознакомьтесь с нашими правилами:\n` +
-      `https://mikhailfur.ru/terms`;
+      `Пожалуйста, ознакомьтесь с нашими правилами:`;
 
     await ctx.reply(message, {
       parse_mode: 'Markdown',
