@@ -106,7 +106,7 @@ export class QueueManager {
       const message = `⏳ *Ожидание в очереди*\n\n` +
         `📊 Твой запрос поставлен в очередь\n` +
         `⏰ Примерное время ожидания: *${timeText}*\n\n` +
-        `${statusEmoji} *Статус загруженности API:* ${statusText} (${quota.percentage.toFixed(1)}%)\n` +
+        `${statusEmoji} *Усталость Али:* ${statusText} (${quota.percentage.toFixed(1)}%)\n` +
         `📈 Использовано: ${quota.used}/${quota.total}\n` +
         `✅ Осталось: ${quota.remaining}\n\n` +
         `💎 *Хочешь общаться без очереди?*\n` +
@@ -155,7 +155,7 @@ export class QueueManager {
       const message = `⏳ *Ожидание в очереди*\n\n` +
         `📊 Твой запрос в очереди (позиция: ${position})\n` +
         `⏰ Осталось ждать: *${timeText}*\n\n` +
-        `${statusEmoji} *Статус загруженности API:* ${statusText} (${quota.percentage.toFixed(1)}%)\n` +
+        `${statusEmoji} *Усталость Али:* ${statusText} (${quota.percentage.toFixed(1)}%)\n` +
         `📈 Использовано: ${quota.used}/${quota.total}\n` +
         `✅ Осталось: ${quota.remaining}\n\n` +
         `💎 *Хочешь общаться без очереди?*\n` +

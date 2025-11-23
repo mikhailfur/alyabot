@@ -166,6 +166,17 @@ class Database {
       
       await this.pool.execute(createApiKeysTableSQL);
       
+      const createVoiceMessagesTableSQL = `
+        CREATE TABLE IF NOT EXISTS voice_messages (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          timestamp BIGINT NOT NULL,
+          INDEX idx_user_timestamp (user_id, timestamp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      await this.pool.execute(createVoiceMessagesTableSQL);
+      
       try {
         const [existing] = await this.pool.execute(`
           SELECT COUNT(*) as count 
@@ -864,6 +875,27 @@ class Database {
     } catch (error) {
       logger.error('Ошибка при получении всех данных ключей API', error);
       return [];
+    }
+  }
+
+  async recordVoiceMessage(userId: number): Promise<void> {
+    try {
+      const sql = 'INSERT INTO voice_messages (user_id, timestamp) VALUES (?, ?)';
+      await this.pool.execute(sql, [userId, Date.now()]);
+    } catch (error) {
+      logger.error('Ошибка при записи голосового сообщения', error);
+    }
+  }
+
+  async getVoiceMessageCount(userId: number, hours: number = 5): Promise<number> {
+    try {
+      const sql = 'SELECT COUNT(*) as count FROM voice_messages WHERE user_id = ? AND timestamp > ?';
+      const hoursAgo = Date.now() - (hours * 60 * 60 * 1000);
+      const [rows]: any = await this.pool.execute(sql, [userId, hoursAgo]);
+      return rows[0]?.count || 0;
+    } catch (error) {
+      logger.error('Ошибка при получении количества голосовых сообщений', error);
+      return 0;
     }
   }
 

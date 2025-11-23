@@ -1015,10 +1015,15 @@ bot.on('photo', async (ctx) => {
 
     await ctx.sendChatAction('typing');
 
+    let voiceMessageCount = 0;
+    if (isPremium) {
+      voiceMessageCount = await database.getVoiceMessageCount(userId, 5);
+    }
+
     const chatHistory = await database.getChatHistory(userId, 10);
     const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, caption || 'Что на этом фото?');
     
-    const prompt = getBehaviorPrompt(behaviorMode);
+    const prompt = getBehaviorPrompt(behaviorMode, false, voiceMessageCount);
     const fullPrompt = `${prompt}\n\n${contextWithHistory}\n\nОписание фото: ${imageDescription}\n\nАля:`;
     
     let text: string;
@@ -1048,12 +1053,14 @@ bot.on('photo', async (ctx) => {
     if (voiceMatch && isPremium) {
       text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
       await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
+      await database.recordVoiceMessage(userId);
       if (text.trim()) {
         await ctx.reply(text.trim());
       }
     } else {
       if (voiceHandler.shouldSendVoice() && isPremium) {
         await voiceHandler.sendVoiceMessage(ctx, text);
+        await database.recordVoiceMessage(userId);
       } else {
         await ctx.reply(text);
       }
@@ -1142,12 +1149,14 @@ bot.on('voice', async (ctx) => {
     if (voiceMatch) {
       text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
       await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
+      await database.recordVoiceMessage(userId);
       if (text.trim()) {
         await ctx.reply(text.trim());
       }
     } else {
       if (voiceHandler.shouldSendVoice()) {
         await voiceHandler.sendVoiceMessage(ctx, text);
+        await database.recordVoiceMessage(userId);
       } else {
         await ctx.reply(text);
       }
@@ -1250,10 +1259,15 @@ bot.on('text', async (ctx) => {
       const user = await database.getUser(userId);
       const behaviorMode = user?.behavior_mode || 'default';
 
+      let voiceMessageCount = 0;
+      if (isPremium && !isGroup) {
+        voiceMessageCount = await database.getVoiceMessageCount(userId, 5);
+      }
+
       const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
       const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
       
-      const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode, !isGroup);
+      const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode, !isGroup, voiceMessageCount);
       const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
       
       let text: string;
@@ -1302,12 +1316,18 @@ bot.on('text', async (ctx) => {
       if (voiceMatch && isPremium) {
         text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
         await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
+        if (isPremium && !isGroup) {
+          await database.recordVoiceMessage(userId);
+        }
         if (text.trim()) {
           await ctx.reply(text.trim());
         }
       } else {
         if (voiceHandler.shouldSendVoice() && isPremium) {
           await voiceHandler.sendVoiceMessage(ctx, text);
+          if (isPremium && !isGroup) {
+            await database.recordVoiceMessage(userId);
+          }
         } else {
           await ctx.reply(text);
         }
