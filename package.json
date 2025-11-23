@@ -7,21 +7,40 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "test:stress": "ts-node scripts/stress-test.ts",
+    "test:health": "ts-node scripts/health-check.ts",
+    "test:commands": "ts-node scripts/test-commands.ts"
   },
-  "keywords": ["telegram", "bot", "ai", "gemini", "anime"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "gemini",
+    "anime"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "telegraf": "^4.15.6",
     "@google/generative-ai": "^0.2.1",
+    "@types/node-cron": "^3.0.11",
     "dotenv": "^16.3.1",
-    "sqlite3": "^5.1.6"
+    "form-data": "^4.0.0",
+    "mysql2": "^3.15.3",
+    "node-cron": "^4.2.1",
+    "sqlite3": "^5.1.6",
+    "telegraf": "^4.15.6"
   },
   "devDependencies": {
     "@types/node": "^20.10.5",
     "@types/sqlite3": "^3.1.11",
-    "typescript": "^5.3.3",
-    "ts-node": "^10.9.2"
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   }
 }
