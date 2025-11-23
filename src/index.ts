@@ -1306,17 +1306,17 @@ async function updateBotDescription(): Promise<void> {
       loadText = 'Средняя';
     }
     
-    const description = `🤖 AI-компаньон Аля из аниме "Аля иногда кокетничает со мной по-русски"
-
-💬 Сейчас общается: ${activeUsers} чел.
-${loadStatus} Загруженность: ${loadText}
+    const shortDescription = `💬 Общается: ${activeUsers} чел. | ${loadStatus} ${loadText}`;
+    
+    const fullDescription = `🤖 AI-компаньон Аля из аниме "Аля иногда кокетничает со мной по-русски"
 
 ✨ Бесплатно: общение, память, группы
 ⭐ Premium: режимы, фото, голос, инициативные сообщения
 
 Просто напиши мне что-нибудь! 😊`;
     
-    await bot.telegram.setMyDescription(description);
+    await bot.telegram.setMyShortDescription(shortDescription);
+    await bot.telegram.setMyDescription(fullDescription);
     logger.debug('Описание бота обновлено', { activeUsers, loadText });
   } catch (error) {
     logger.error('Ошибка при обновлении описания бота', error);
