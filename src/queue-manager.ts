@@ -18,6 +18,7 @@ export class QueueManager {
   private bot: Telegraf;
   private balancer: GeminiBalancer;
   private updateInterval: NodeJS.Timeout | null = null;
+  private usersInQueue: Set<number> = new Set();
 
   constructor(bot: Telegraf, balancer: GeminiBalancer) {
     this.bot = bot;
@@ -37,7 +38,15 @@ export class QueueManager {
     }
   }
 
+  isUserInQueue(userId: number): boolean {
+    return this.usersInQueue.has(userId);
+  }
+
   async addToQueue(userId: number, chatId: number): Promise<void> {
+    if (this.usersInQueue.has(userId)) {
+      throw new Error('Пользователь уже в очереди');
+    }
+
     return new Promise((resolve, reject) => {
       const quota = this.balancer.getTotalFreeQuota();
       const waitTime = this.calculateWaitTime(quota.percentage);
@@ -47,6 +56,8 @@ export class QueueManager {
         return;
       }
 
+      this.usersInQueue.add(userId);
+
       const queueItem: QueueItem = {
         userId,
         chatId,
@@ -54,12 +65,20 @@ export class QueueManager {
         queueMessageId: 0,
         startTime: Date.now(),
         estimatedWaitTime: waitTime * 1000,
-        resolve,
-        reject,
+        resolve: () => {
+          this.usersInQueue.delete(userId);
+          resolve();
+        },
+        reject: (error: Error) => {
+          this.usersInQueue.delete(userId);
+          reject(error);
+        },
       };
 
       this.queue.push(queueItem);
-      this.sendQueueMessage(queueItem);
+      this.sendQueueMessage(queueItem).catch(error => {
+        console.error('Ошибка при отправке сообщения об очереди:', error);
+      });
       this.processQueue();
     });
   }
@@ -152,7 +171,9 @@ export class QueueManager {
 
       if (elapsed >= item.estimatedWaitTime) {
         this.queue.shift();
-        await this.deleteQueueMessage(item);
+        this.deleteQueueMessage(item).catch(error => {
+          console.error('Ошибка при удалении сообщения об очереди:', error);
+        });
         item.resolve();
       } else {
         break;
