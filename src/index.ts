@@ -1208,7 +1208,7 @@ bot.on('text', async (ctx) => {
     const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
     const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
     
-    const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode);
+    const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode, !isGroup);
     const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
     
     let text: string;
@@ -1219,6 +1219,11 @@ bot.on('text', async (ctx) => {
         maxRetries: 3,
         behaviorMode
       });
+      
+      if (text.trim() === '[NSFW_BLOCKED]' || text.trim().includes('[NSFW_BLOCKED]')) {
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        return;
+      }
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API:', error);
