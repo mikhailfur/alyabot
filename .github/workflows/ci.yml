@@ -82,9 +82,16 @@ jobs:
           fi
           if [ ! -f "dist/index.js" ]; then
             echo "❌ Файл dist/index.js не найден"
+            echo "📁 Содержимое dist:"
+            ls -la dist/ || echo "Папка dist пуста"
+            if [ -d "dist/src" ]; then
+              echo "📁 Содержимое dist/src:"
+              ls -la dist/src/ || echo "Папка dist/src пуста"
+            fi
             exit 1
           fi
           echo "✅ Сборка успешна"
+          echo "📁 Найден файл: dist/index.js"
 
   test-commands:
     name: Тестирование команд

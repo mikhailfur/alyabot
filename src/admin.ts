@@ -60,7 +60,7 @@ export class AdminPanel {
         } catch (e: any) {
           console.error('Ошибка при отправке без Markdown:', e);
           try {
-            await ctx.reply(message.replace(/[*_`\[\]()~]/g, ''), {
+            await ctx.reply(message.replace(/[*_`[\]()~]/g, ''), {
               parse_mode: undefined,
               ...keyboard,
             });
@@ -109,9 +109,8 @@ export class AdminPanel {
 
     const stats = await database.getUsersStats();
     const users = await database.getAllUsers();
-    const premiumUsers = users.filter(u => u.is_premium);
 
-    const modelStats = users.reduce((acc: any, u: any) => {
+    const modelStats = users.reduce((acc: Record<string, number>, u: { model_type?: string | null }) => {
       const model = u.model_type || 'auto';
       acc[model] = (acc[model] || 0) + 1;
       return acc;
@@ -1128,8 +1127,9 @@ export class AdminPanel {
                 `Проверено: ${checkedCount}/${totalUsers}\n` +
                 `Найдено заблокированных: ${blockedCount}`
               );
-            } catch (e) {
-            }
+        } catch (e) {
+          // Игнорируем ошибки удаления
+        }
           }
 
           await new Promise(resolve => setTimeout(resolve, 100));

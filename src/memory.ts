@@ -63,7 +63,7 @@ export class MemoryManager {
     return false;
   }
 
-  extractImportantInfo(message: string, response: string): string {
+  extractImportantInfo(message: string, _response: string): string {
     if (!this.shouldRememberMessage(message)) {
       return '';
     }
