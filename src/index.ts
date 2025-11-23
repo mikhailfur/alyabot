@@ -15,6 +15,7 @@ import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
 import { GeminiClient } from './gemini-client';
+import { RateLimiter } from './rate-limiter';
 
 dotenv.config();
 validateConfig();
@@ -27,6 +28,7 @@ const subscriptionManager = new SubscriptionManager(bot);
 const adminPanel = new AdminPanel(bot);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
+const rateLimiter = new RateLimiter();
 
 bot.use(async (ctx, next) => {
   try {
@@ -1083,9 +1085,32 @@ bot.on('text', async (ctx) => {
 
     if (!shouldRespond) return;
 
-    await ctx.sendChatAction('typing');
-
     const isPremium = await subscriptionManager.checkUserSubscription(userId);
+    
+    if (!isPremium && !isGroup) {
+      const limitCheck = rateLimiter.canSendMessage(userId);
+      if (!limitCheck.allowed) {
+        if (limitCheck.cooldownEnd) {
+          const timeRemaining = limitCheck.cooldownEnd - Date.now();
+          const timeStr = rateLimiter.formatTimeRemaining(timeRemaining);
+          await ctx.reply(
+            `⏳ *Лимит сообщений исчерпан*\n\n` +
+            `Ты отправил(а) 50 сообщений за последние 4 часа.\n\n` +
+            `⏰ Подожди ${timeStr}, чтобы продолжить общение.\n\n` +
+            `💎 Или оформи Premium подписку для безлимитного общения!`,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('💎 Оформить Premium', 'premium')],
+              ]),
+            }
+          );
+          return;
+        }
+      }
+    }
+
+    await ctx.sendChatAction('typing');
     const user = await database.getUser(userId);
     const behaviorMode = user?.behavior_mode || 'default';
 
@@ -1124,6 +1149,10 @@ bot.on('text', async (ctx) => {
     
     await database.saveMessage(userId, username, userMessage, text, chatId, chatType);
     await database.updateUserActivity(userId);
+    
+    if (!isPremium && !isGroup) {
+      rateLimiter.recordMessage(userId);
+    }
     
   } catch (error) {
     console.error('Ошибка при генерации ответа:', error);
