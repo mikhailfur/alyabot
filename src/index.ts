@@ -1295,7 +1295,20 @@ scheduleNextBroadcast();
 async function updateBotDescription(): Promise<void> {
   try {
     const activeUsers = await database.getActiveUsersCount(5);
-    const error429Count = await database.getApiErrorCount('gemini_429', 3);
+    
+    // Получаем количество ошибок 429, если таблица существует
+    let error429Count = 0;
+    try {
+      error429Count = await database.getApiErrorCount('gemini_429', 3);
+    } catch (error: any) {
+      // Если таблица еще не создана, просто используем 0
+      if (error.code === 'ER_NO_SUCH_TABLE') {
+        logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
+        error429Count = 0;
+      } else {
+        logger.warn('Ошибка при получении количества ошибок 429', error);
+      }
+    }
     
     let loadStatus = '🟢';
     let loadText = 'Низкая';

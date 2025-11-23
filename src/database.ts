@@ -469,16 +469,44 @@ class Database {
     return rows[0]?.count || 0;
   }
 
+  private async ensureApiErrorsTable(): Promise<void> {
+    try {
+      const createApiErrorsTableSQL = `
+        CREATE TABLE IF NOT EXISTS api_errors (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          error_type VARCHAR(50) NOT NULL,
+          error_code INT,
+          timestamp BIGINT NOT NULL,
+          INDEX idx_type_timestamp (error_type, timestamp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      await this.pool.execute(createApiErrorsTableSQL);
+    } catch (error) {
+      logger.error('Ошибка при создании таблицы api_errors', error);
+    }
+  }
+
   async recordApiError(errorType: string, errorCode: number): Promise<void> {
-    const sql = 'INSERT INTO api_errors (error_type, error_code, timestamp) VALUES (?, ?, ?)';
-    await this.pool.execute(sql, [errorType, errorCode, Date.now()]);
+    try {
+      await this.ensureApiErrorsTable();
+      const sql = 'INSERT INTO api_errors (error_type, error_code, timestamp) VALUES (?, ?, ?)';
+      await this.pool.execute(sql, [errorType, errorCode, Date.now()]);
+    } catch (error) {
+      logger.error('Ошибка при записи ошибки API в базу данных', error);
+    }
   }
 
   async getApiErrorCount(errorType: string, hours: number = 3): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM api_errors WHERE error_type = ? AND timestamp > ?';
-    const hoursAgo = Date.now() - (hours * 60 * 60 * 1000);
-    const [rows]: any = await this.pool.execute(sql, [errorType, hoursAgo]);
-    return rows[0]?.count || 0;
+    try {
+      await this.ensureApiErrorsTable();
+      const sql = 'SELECT COUNT(*) as count FROM api_errors WHERE error_type = ? AND timestamp > ?';
+      const hoursAgo = Date.now() - (hours * 60 * 60 * 1000);
+      const [rows]: any = await this.pool.execute(sql, [errorType, hoursAgo]);
+      return rows[0]?.count || 0;
+    } catch (error) {
+      logger.error('Ошибка при получении количества ошибок API', error);
+      return 0;
+    }
   }
 
   async setUserPremium(userId: number, isPremium: boolean, expiresAt?: number): Promise<void> {
