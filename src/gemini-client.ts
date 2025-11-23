@@ -134,16 +134,52 @@ export class GeminiClient {
           }
         }
         
-        if (is429 && attempt === maxRetries - 1) {
-          throw new RateLimitError('API rate limit exceeded');
+        if (is429) {
+          if (!isPremium) {
+            const availableKey = this.balancer.getAvailableFreeKey();
+            if (!availableKey) {
+              if (attempt === maxRetries - 1) {
+                try {
+                  await database.recordApiError('gemini_429', 429);
+                  logger.warn('Все FREE ключи исчерпали лимит', { attempt: attempt + 1, maxRetries });
+                } catch (dbError) {
+                  logger.error('Ошибка при записи ошибки 429 в базу данных', dbError);
+                }
+                throw new RateLimitError('API rate limit exceeded');
+              }
+            } else {
+              const genAI = this.balancer.getToken(isPremium);
+              const tokenKey = this.getTokenKey(genAI, isPremium);
+              
+              if (tokenKey) {
+                logger.warn(`Ошибка 429, переключаюсь на доступный ключ`, { 
+                  attempt: attempt + 1, 
+                  maxRetries,
+                  oldKey: tokenKey.substring(0, 10) + '...',
+                  newKey: availableKey.substring(0, 10) + '...'
+                });
+                this.balancer.markTokenUnavailable(tokenKey, isPremium);
+                usedTokens.add(tokenKey);
+                
+                if (attempt < maxRetries - 1) {
+                  await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+                  continue;
+                }
+              }
+            }
+          } else {
+            if (attempt === maxRetries - 1) {
+              throw new RateLimitError('API rate limit exceeded');
+            }
+          }
         }
         
-        if (this.isRetryableError(error)) {
+        if (this.isRetryableError(error) && !is429) {
           const genAI = this.balancer.getToken(isPremium);
           const tokenKey = this.getTokenKey(genAI, isPremium);
           
           if (tokenKey) {
-            console.log(`⚠️ Ошибка перегрузки API (попытка ${attempt + 1}/${maxRetries}), пробую другой токен...`);
+            logger.warn(`Ошибка перегрузки API (попытка ${attempt + 1}/${maxRetries}), пробую другой токен...`);
             this.balancer.markTokenUnavailable(tokenKey, isPremium);
             usedTokens.add(tokenKey);
             

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { ApiLimitMonitor } from './api-limit-monitor';
 
 interface TokenInstance {
   api: GoogleGenerativeAI;
@@ -12,8 +13,10 @@ interface TokenInstance {
 export class GeminiBalancer {
   private freeTokens: TokenInstance[] = [];
   private premiumTokens: TokenInstance[] = [];
+  private apiLimitMonitor?: ApiLimitMonitor;
 
-  constructor(freeApiKeys: string[], premiumApiKeys: string[] = []) {
+  constructor(freeApiKeys: string[], premiumApiKeys: string[] = [], apiLimitMonitor?: ApiLimitMonitor) {
+    this.apiLimitMonitor = apiLimitMonitor;
     this.freeTokens = freeApiKeys.map(key => ({
       api: new GoogleGenerativeAI(key),
       key,
@@ -37,18 +40,43 @@ export class GeminiBalancer {
     }
   }
 
-  private getNextToken(tokens: TokenInstance[]): TokenInstance {
+  private getNextToken(tokens: TokenInstance[], isPremium: boolean = false): TokenInstance {
     if (tokens.length === 0) {
       throw new Error('Нет доступных токенов');
     }
 
-    const availableTokens = tokens.filter(t => t.isAvailable);
+    if (!isPremium && this.apiLimitMonitor) {
+      const availableKey = this.apiLimitMonitor.getAvailableKey();
+      if (availableKey) {
+        const token = tokens.find(t => t.key === availableKey);
+        if (token && token.isAvailable) {
+          token.lastUsed = Date.now();
+          token.requestCount++;
+          this.apiLimitMonitor.recordUsage(availableKey);
+          return token;
+        }
+      }
+    }
+
+    const availableTokens = tokens.filter(t => {
+      if (!t.isAvailable) return false;
+      if (!isPremium && this.apiLimitMonitor) {
+        const keyStatus = this.apiLimitMonitor.getKeyStatus(t.key);
+        return keyStatus && !keyStatus.isExhausted && keyStatus.remaining > 0;
+      }
+      return true;
+    });
+
     if (availableTokens.length === 0) {
       tokens.forEach(t => t.isAvailable = true);
       return this.selectBestToken(tokens);
     }
 
-    return this.selectBestToken(availableTokens);
+    const selected = this.selectBestToken(availableTokens);
+    if (!isPremium && this.apiLimitMonitor) {
+      this.apiLimitMonitor.recordUsage(selected.key);
+    }
+    return selected;
   }
 
   private selectBestToken(tokens: TokenInstance[]): TokenInstance {
@@ -79,7 +107,7 @@ export class GeminiBalancer {
   }
 
   getFreeToken(): GoogleGenerativeAI {
-    const token = this.getNextToken(this.freeTokens);
+    const token = this.getNextToken(this.freeTokens, false);
     return token.api;
   }
 
@@ -88,7 +116,7 @@ export class GeminiBalancer {
       return this.getFreeToken();
     }
     
-    const token = this.getNextToken(this.premiumTokens);
+    const token = this.getNextToken(this.premiumTokens, true);
     return token.api;
   }
 
@@ -105,6 +133,20 @@ export class GeminiBalancer {
         token.isAvailable = true;
       }, 60000);
     }
+  }
+
+  getAvailableFreeKey(): string | null {
+    if (!this.apiLimitMonitor) {
+      return this.freeTokens.find(t => t.isAvailable)?.key || null;
+    }
+    return this.apiLimitMonitor.getAvailableKey();
+  }
+
+  hasAvailableFreeKeys(): boolean {
+    if (!this.apiLimitMonitor) {
+      return this.freeTokens.some(t => t.isAvailable);
+    }
+    return this.apiLimitMonitor.getAvailableKey() !== null;
   }
 
   getStats(): { free: number; premium: number; freeRequests: number; premiumRequests: number } {

@@ -16,6 +16,8 @@ import { GeminiBalancer } from './gemini-balancer';
 import { GeminiClient, RateLimitError, ProhibitedContentError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
 import { logger } from './logger';
+import { ApiLimitMonitor } from './api-limit-monitor';
+import { QueueManager } from './queue-manager';
 
 dotenv.config();
 validateConfig();
@@ -23,14 +25,18 @@ validateConfig();
 logger.info('Бот запускается...');
 
 const bot = new Telegraf(config.telegramBotToken);
-const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium);
+const apiLimitMonitor = new ApiLimitMonitor(config.geminiApiKeys);
+apiLimitMonitor.startMonitoring();
+
+const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApiKeysPremium, apiLimitMonitor);
 const geminiClient = new GeminiClient(geminiBalancer);
 
 const subscriptionManager = new SubscriptionManager(bot);
-const adminPanel = new AdminPanel(bot);
+const adminPanel = new AdminPanel(bot, apiLimitMonitor);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 const rateLimiter = new RateLimiter();
+const queueManager = new QueueManager(bot, apiLimitMonitor);
 
 async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Promise<void> {
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
@@ -1215,6 +1221,10 @@ bot.on('text', async (ctx) => {
       }
     }
 
+    if (!isPremium && !isGroup) {
+      await queueManager.addToQueue(userId, chatId, userMessage);
+    }
+
     await ctx.sendChatAction('typing');
     const user = await database.getUser(userId);
     const behaviorMode = user?.behavior_mode || 'default';
@@ -1376,41 +1386,48 @@ async function updateBotDescription(): Promise<void> {
   try {
     const activeUsers = await database.getActiveUsersCount(5);
     
-    // Получаем количество ошибок 429, если таблица существует
-    let error429Count = 0;
-    try {
-      error429Count = await database.getApiErrorCount('gemini_429', 3);
-    } catch (error: any) {
-      // Если таблица еще не создана, просто используем 0
-      if (error.code === 'ER_NO_SUCH_TABLE') {
-        logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
-        error429Count = 0;
-      } else {
-        logger.warn('Ошибка при получении количества ошибок 429', error);
-      }
-    }
-    
     let loadStatus = '🟢';
     let loadText = 'Низкая';
+    let loadPercentage = 0;
     
-    // Определяем загруженность на основе количества пользователей
-    if (activeUsers >= 20) {
-      loadStatus = '🔴';
-      loadText = 'Повышенная';
-    } else if (activeUsers >= 10) {
-      loadStatus = '🟡';
-      loadText = 'Средняя';
-    }
-    
-    // Учитываем ошибки 429 от Gemini API за последние 3 часа
-    // Если более 8 ошибок - повышенная загруженность
-    // Если более 3 ошибок - средняя загруженность
-    if (error429Count >= 8) {
-      loadStatus = '🔴';
-      loadText = 'Повышенная';
-    } else if (error429Count > 3 && loadStatus !== '🔴') {
-      loadStatus = '🟡';
-      loadText = 'Средняя';
+    if (apiLimitMonitor) {
+      loadPercentage = apiLimitMonitor.getLoadPercentage();
+      
+      if (loadPercentage >= 80) {
+        loadStatus = '🔴';
+        loadText = 'Повышенная';
+      } else if (loadPercentage >= 40) {
+        loadStatus = '🟡';
+        loadText = 'Средняя';
+      }
+    } else {
+      let error429Count = 0;
+      try {
+        error429Count = await database.getApiErrorCount('gemini_429', 3);
+      } catch (error: any) {
+        if (error.code === 'ER_NO_SUCH_TABLE') {
+          logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
+          error429Count = 0;
+        } else {
+          logger.warn('Ошибка при получении количества ошибок 429', error);
+        }
+      }
+      
+      if (activeUsers >= 20) {
+        loadStatus = '🔴';
+        loadText = 'Повышенная';
+      } else if (activeUsers >= 10) {
+        loadStatus = '🟡';
+        loadText = 'Средняя';
+      }
+      
+      if (error429Count >= 8) {
+        loadStatus = '🔴';
+        loadText = 'Повышенная';
+      } else if (error429Count > 3 && loadStatus !== '🔴') {
+        loadStatus = '🟡';
+        loadText = 'Средняя';
+      }
     }
     
     const shortDescription = `💬 Общается: ${activeUsers} чел. | ${loadStatus} ${loadText}`;
@@ -1424,7 +1441,7 @@ async function updateBotDescription(): Promise<void> {
     
     await bot.telegram.setMyShortDescription(shortDescription);
     await bot.telegram.setMyDescription(fullDescription);
-    logger.debug('Описание бота обновлено', { activeUsers, error429Count, loadText });
+    logger.debug('Описание бота обновлено', { activeUsers, loadPercentage, loadText });
   } catch (error) {
     logger.error('Ошибка при обновлении описания бота', error);
   }
@@ -1432,6 +1449,13 @@ async function updateBotDescription(): Promise<void> {
 
 cron.schedule('* * * * *', async () => {
   await updateBotDescription();
+}, {
+  timezone: 'Europe/Moscow'
+});
+
+cron.schedule('0 0 * * *', async () => {
+  apiLimitMonitor.resetDailyLimits();
+  logger.info('Дневные лимиты API сброшены');
 }, {
   timezone: 'Europe/Moscow'
 });
@@ -1445,12 +1469,14 @@ logger.info('Бот Аля запущен! 🤖');
 process.once('SIGINT', async () => {
   logger.info('Завершение работы бота... (SIGINT)');
   subscriptionManager.stopPeriodicCheck();
+  apiLimitMonitor.stopMonitoring();
   await database.close();
   bot.stop('SIGINT');
 });
 process.once('SIGTERM', async () => {
   logger.info('Завершение работы бота... (SIGTERM)');
   subscriptionManager.stopPeriodicCheck();
+  apiLimitMonitor.stopMonitoring();
   await database.close();
   bot.stop('SIGTERM');
 });

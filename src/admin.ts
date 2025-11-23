@@ -5,9 +5,11 @@ import { config } from './config';
 export class AdminPanel {
   private bot: Telegraf;
   private sessions: Map<number, any> = new Map();
+  private apiLimitMonitor?: any;
 
-  constructor(bot: Telegraf) {
+  constructor(bot: Telegraf, apiLimitMonitor?: any) {
     this.bot = bot;
+    this.apiLimitMonitor = apiLimitMonitor;
   }
 
   isAdmin(userId: number): boolean {
@@ -116,12 +118,24 @@ export class AdminPanel {
       return acc;
     }, {});
 
+    let apiLimitInfo = '';
+    if (this.apiLimitMonitor) {
+      const totalLimit = this.apiLimitMonitor.getTotalLimit();
+      const totalRemaining = this.apiLimitMonitor.getTotalRemaining();
+      const loadPercentage = this.apiLimitMonitor.getLoadPercentage();
+      const used = totalLimit - totalRemaining;
+      
+      apiLimitInfo = `\n📊 *Лимиты FREE API:*\n` +
+        `📈 Использовано: ${used}/${totalLimit} (${loadPercentage.toFixed(1)}%)\n` +
+        `📉 Осталось: ${totalRemaining}\n`;
+    }
+
     const message = `🔐 *Админ-панель*\n\n` +
       `📊 *Статистика:*\n` +
       `👥 Всего пользователей: ${stats.total_users || 0}\n` +
       `⭐ Premium пользователей: ${stats.premium_users || 0}\n` +
       `🟢 Активных за 24ч: ${stats.active_users || 0}\n` +
-      `💬 Всего сообщений: ${stats.total_messages || 0}\n\n` +
+      `💬 Всего сообщений: ${stats.total_messages || 0}${apiLimitInfo}\n\n` +
       `Выберите действие:`;
 
     let modelInfo = `\n🤖 *Модели:*\n`;
