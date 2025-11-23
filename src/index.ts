@@ -1216,6 +1216,8 @@ bot.on('text', async (ctx) => {
       const userApiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS;
       const shouldUseQueue = !isPremium && !isGroup && !userApiKey;
       
+      console.log(`[Queue] userId: ${userId}, isPremium: ${isPremium}, isGroup: ${isGroup}, userApiKey: ${!!userApiKey}, shouldUseQueue: ${shouldUseQueue}`);
+      
       if (!isPremium && !isGroup) {
         const limitCheck = rateLimiter.canSendMessage(userId);
         if (!limitCheck.allowed) {
@@ -1241,6 +1243,8 @@ bot.on('text', async (ctx) => {
           }
           throw error;
         }
+      } else {
+        console.log(`[Queue] Очередь не используется для userId: ${userId}`);
       }
 
       await ctx.sendChatAction('typing');

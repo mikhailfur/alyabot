@@ -29,13 +29,14 @@ export class QueueManager {
   private calculateWaitTime(percentage: number): number {
     if (percentage < 40) {
       return 0;
-    } else if (percentage < 60) {
+    } else if (percentage >= 40 && percentage < 60) {
       return 60 + Math.random() * 60;
-    } else if (percentage < 80) {
+    } else if (percentage >= 60 && percentage < 80) {
       return 120 + Math.random() * 60;
-    } else {
+    } else if (percentage >= 80) {
       return Math.min(300, 180 + Math.random() * 120);
     }
+    return 0;
   }
 
   isUserInQueue(userId: number): boolean {
@@ -51,10 +52,15 @@ export class QueueManager {
       const quota = this.balancer.getTotalFreeQuota();
       const waitTime = this.calculateWaitTime(quota.percentage);
 
+      console.log(`[Queue] Загруженность: ${quota.percentage.toFixed(2)}%, Время ожидания: ${waitTime}с, Осталось: ${quota.remaining}/${quota.total}, Использовано: ${quota.used}`);
+
       if (waitTime === 0) {
+        console.log(`[Queue] Очередь не требуется, загруженность ${quota.percentage.toFixed(2)}% < 40%`);
         resolve();
         return;
       }
+
+      console.log(`[Queue] Добавление в очередь: userId=${userId}, waitTime=${waitTime}с`);
 
       this.usersInQueue.add(userId);
 
