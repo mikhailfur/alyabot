@@ -1292,6 +1292,72 @@ function scheduleNextBroadcast(): void {
 
 scheduleNextBroadcast();
 
+async function updateBotDescription(): Promise<void> {
+  try {
+    const activeUsers = await database.getActiveUsersCount(5);
+    
+    // Получаем количество ошибок 429, если таблица существует
+    let error429Count = 0;
+    try {
+      error429Count = await database.getApiErrorCount('gemini_429', 3);
+    } catch (error: any) {
+      // Если таблица еще не создана, просто используем 0
+      if (error.code === 'ER_NO_SUCH_TABLE') {
+        logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
+        error429Count = 0;
+      } else {
+        logger.warn('Ошибка при получении количества ошибок 429', error);
+      }
+    }
+    
+    let loadStatus = '🟢';
+    let loadText = 'Низкая';
+    
+    // Определяем загруженность на основе количества пользователей
+    if (activeUsers >= 20) {
+      loadStatus = '🔴';
+      loadText = 'Повышенная';
+    } else if (activeUsers >= 10) {
+      loadStatus = '🟡';
+      loadText = 'Средняя';
+    }
+    
+    // Учитываем ошибки 429 от Gemini API за последние 3 часа
+    // Если более 8 ошибок - повышенная загруженность
+    // Если более 3 ошибок - средняя загруженность
+    if (error429Count >= 8) {
+      loadStatus = '🔴';
+      loadText = 'Повышенная';
+    } else if (error429Count > 3 && loadStatus !== '🔴') {
+      loadStatus = '🟡';
+      loadText = 'Средняя';
+    }
+    
+    const shortDescription = `💬 Общается: ${activeUsers} чел. | ${loadStatus} ${loadText}`;
+    
+    const fullDescription = `🤖 AI-компаньон Аля из аниме "Аля иногда кокетничает со мной по-русски"
+
+✨ Бесплатно: общение, память, группы
+⭐ Premium: режимы, фото, голос, инициативные сообщения
+
+Просто напиши мне что-нибудь! 😊`;
+    
+    await bot.telegram.setMyShortDescription(shortDescription);
+    await bot.telegram.setMyDescription(fullDescription);
+    logger.debug('Описание бота обновлено', { activeUsers, error429Count, loadText });
+  } catch (error) {
+    logger.error('Ошибка при обновлении описания бота', error);
+  }
+}
+
+cron.schedule('* * * * *', async () => {
+  await updateBotDescription();
+}, {
+  timezone: 'Europe/Moscow'
+});
+
+updateBotDescription();
+
 bot.launch();
 
 logger.info('Бот Аля запущен! 🤖');
