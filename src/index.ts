@@ -1,5 +1,4 @@
 import { Telegraf, Markup } from 'telegraf';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -7,7 +6,7 @@ import * as cron from 'node-cron';
 import { config, validateConfig } from './config';
 import { database } from './database';
 import { memoryManager } from './memory';
-import { alyaPromptPrivate, alyaPromptGroup, getBehaviorPrompt } from './prompt';
+import { alyaPromptGroup, getBehaviorPrompt } from './prompt';
 import { SubscriptionManager } from './subscription';
 import { AdminPanel } from './admin';
 import { VoiceHandler } from './voice';
@@ -500,6 +499,7 @@ bot.action('menu', async (ctx) => {
         try {
           await ctx.deleteMessage();
         } catch (e) {
+          // Игнорируем ошибки удаления
         }
         await ctx.replyWithPhoto({ source: imagePath }, {
           caption: message,

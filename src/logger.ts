@@ -41,13 +41,6 @@ export class Logger {
   private writeLog(level: LogLevel, levelName: string, message: string, data?: any): void {
     if (level < this.logLevel) return;
 
-    const logEntry: LogEntry = {
-      timestamp: new Date().toISOString(),
-      level: levelName,
-      message,
-      data
-    };
-
     const formattedMessage = this.formatMessage(levelName, message, data);
 
     if (this.logToConsole) {

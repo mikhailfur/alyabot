@@ -21,7 +21,8 @@
     "@typescript-eslint/explicit-function-return-type": "off",
     "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
     "no-console": "off",
-    "no-empty": "warn"
+    "no-empty": "warn",
+    "no-useless-escape": "warn"
   },
   "ignorePatterns": ["dist", "node_modules", "*.js"]
 }
