@@ -1,4 +1,4 @@
-import { GeminiClient } from './gemini-client';
+import { GeminiClient, ProhibitedContentError } from './gemini-client';
 
 export class ImageProcessor {
   private geminiClient: GeminiClient;

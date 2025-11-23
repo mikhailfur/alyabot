@@ -13,7 +13,7 @@ import { VoiceHandler } from './voice';
 import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
-import { GeminiClient, RateLimitError } from './gemini-client';
+import { GeminiClient, RateLimitError, ProhibitedContentError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
 import { logger } from './logger';
 
@@ -47,6 +47,37 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
       `Мне нужно отдохнуть. Я отвечу через 30 минут, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`
     : `😴 *Аля устала!*\n\n` +
       `Ты отправил(а) 30 сообщений за последний час. Мне нужно отдохнуть. Я отвечу через некоторое время, или ты можешь купить мне "энергетик" (Premium), чтобы я болтала с тобой без остановки! 💪`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('💎 Купить Premium', 'premium')],
+  ]);
+
+  if (imageExists) {
+    await ctx.replyWithPhoto({ source: imagePath }, {
+      caption: message,
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  }
+}
+
+async function sendProhibitedContentMessage(ctx: any): Promise<void> {
+  const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
+  let imageExists = false;
+  try {
+    await fs.promises.access(imagePath);
+    imageExists = true;
+  } catch {
+    imageExists = false;
+  }
+
+  const message = `Вы отправляете запрос который содержит NSFW (19+) Контент.\n\n` +
+    `Чтобы иметь возможность общаться с Алей на интимные темы, в том числе 19+ RolePlay купите подписку`;
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('💎 Купить Premium', 'premium')],
@@ -965,12 +996,18 @@ bot.on('photo', async (ctx) => {
       text = await geminiClient.generateContent({
         prompt: fullPrompt,
         isPremium,
-        maxRetries: 3
+        maxRetries: 3,
+        behaviorMode
       });
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API при обработке фото:', error);
         await sendRateLimitMessage(ctx, true);
+        return;
+      }
+      if (error instanceof ProhibitedContentError) {
+        console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке фото:', error);
+        await sendProhibitedContentMessage(ctx);
         return;
       }
       console.error('Ошибка при генерации ответа на фото через Gemini:', error);
@@ -1050,12 +1087,18 @@ bot.on('voice', async (ctx) => {
       text = await geminiClient.generateContent({
         prompt: fullPrompt,
         isPremium,
-        maxRetries: 3
+        maxRetries: 3,
+        behaviorMode
       });
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API при обработке голосового:', error);
         await sendRateLimitMessage(ctx, true);
+        return;
+      }
+      if (error instanceof ProhibitedContentError) {
+        console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке голосового:', error);
+        await sendProhibitedContentMessage(ctx);
         return;
       }
       console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
@@ -1161,12 +1204,18 @@ bot.on('text', async (ctx) => {
       text = await geminiClient.generateContent({
         prompt: fullPrompt,
         isPremium,
-        maxRetries: 3
+        maxRetries: 3,
+        behaviorMode
       });
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API:', error);
         await sendRateLimitMessage(ctx, true);
+        return;
+      }
+      if (error instanceof ProhibitedContentError) {
+        console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
+        await sendProhibitedContentMessage(ctx);
         return;
       }
       console.error('Ошибка при генерации ответа через Gemini:', error);
