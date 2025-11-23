@@ -27,16 +27,24 @@ export class QueueManager {
   }
 
   private calculateWaitTime(percentage: number): number {
-    if (percentage < 40) {
+    if (percentage < 60) {
       return 0;
-    } else if (percentage >= 40 && percentage < 60) {
-      return 60 + Math.random() * 60;
-    } else if (percentage >= 60 && percentage < 80) {
-      return 120 + Math.random() * 60;
-    } else if (percentage >= 80) {
-      return Math.min(300, 180 + Math.random() * 120);
     }
-    return 0;
+    
+    // Прогрессивный рост времени ожидания от 60% до 100%
+    // При 60% = 60 секунд (1 минута)
+    // При 80% = 120 секунд (2 минуты)
+    // При 100% = 300 секунд (5 минут)
+    const minPercentage = 60;
+    const maxPercentage = 100;
+    const minTime = 60; // 1 минута
+    const maxTime = 300; // 5 минут
+    
+    // Линейная интерполяция
+    const normalizedPercentage = Math.min(percentage, maxPercentage);
+    const waitTime = minTime + (normalizedPercentage - minPercentage) * (maxTime - minTime) / (maxPercentage - minPercentage);
+    
+    return Math.round(waitTime);
   }
 
   isUserInQueue(userId: number): boolean {
