@@ -66,7 +66,7 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
   }
 }
 
-async function sendProhibitedContentMessage(ctx: any): Promise<void> {
+async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium: boolean): Promise<void> {
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
   let imageExists = false;
   try {
@@ -76,12 +76,24 @@ async function sendProhibitedContentMessage(ctx: any): Promise<void> {
     imageExists = false;
   }
 
-  const message = `Вы отправляете запрос который содержит NSFW (19+) Контент.\n\n` +
-    `Чтобы иметь возможность общаться с Алей на интимные темы, в том числе 19+ RolePlay купите подписку`;
+  let message: string;
+  let keyboard: any;
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('💎 Купить Premium', 'premium')],
-  ]);
+  if (isPremium) {
+    message = `Вы отправляете запрос который содержит NSFW (19+) Контент.\n\n` +
+      `Чтобы иметь возможность общаться с Алей на интимные темы, в том числе 19+ RolePlay включите режим NSFW в настройках`;
+
+    keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔥 Включить NSFW режим', 'mode_nsfw')],
+    ]);
+  } else {
+    message = `Вы отправляете запрос который содержит NSFW (19+) Контент.\n\n` +
+      `Чтобы иметь возможность общаться с Алей на интимные темы, в том числе 19+ RolePlay купите подписку`;
+
+    keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('💎 Купить Premium', 'premium')],
+    ]);
+  }
 
   if (imageExists) {
     await ctx.replyWithPhoto({ source: imagePath }, {
@@ -1007,7 +1019,7 @@ bot.on('photo', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке фото:', error);
-        await sendProhibitedContentMessage(ctx);
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
         return;
       }
       console.error('Ошибка при генерации ответа на фото через Gemini:', error);
@@ -1098,7 +1110,7 @@ bot.on('voice', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке голосового:', error);
-        await sendProhibitedContentMessage(ctx);
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
         return;
       }
       console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
@@ -1215,7 +1227,7 @@ bot.on('text', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
-        await sendProhibitedContentMessage(ctx);
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
         return;
       }
       console.error('Ошибка при генерации ответа через Gemini:', error);
