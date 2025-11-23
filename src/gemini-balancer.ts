@@ -13,6 +13,34 @@ interface TokenInstance {
   quotaExhausted: boolean;
 }
 
+function getPacificDayStart(timestamp: number): number {
+  const date = new Date(timestamp);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  
+  const pacificDateStr = formatter.format(date);
+  
+  const pstMidnight = new Date(`${pacificDateStr}T00:00:00-08:00`);
+  const pdtMidnight = new Date(`${pacificDateStr}T00:00:00-07:00`);
+  
+  const pstPacific = pstMidnight.toLocaleString('en-US', { 
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  
+  if (pstPacific.startsWith('00:') || pstPacific === '12:00 AM') {
+    return pstMidnight.getTime();
+  }
+  
+  return pdtMidnight.getTime();
+}
+
 export class GeminiBalancer {
   private freeTokens: TokenInstance[] = [];
   private premiumTokens: TokenInstance[] = [];
@@ -147,10 +175,10 @@ export class GeminiBalancer {
     }
 
     const now = Date.now();
-    const dayStart = new Date(now).setHours(0, 0, 0, 0);
-    const lastCheckDay = new Date(token.lastQuotaCheck).setHours(0, 0, 0, 0);
+    const currentPacificDayStart = getPacificDayStart(now);
+    const lastCheckPacificDayStart = getPacificDayStart(token.lastQuotaCheck || now);
     
-    if (dayStart !== lastCheckDay) {
+    if (currentPacificDayStart !== lastCheckPacificDayStart) {
       token.requestCount = 0;
       token.remainingQuota = token.dailyLimit;
       token.quotaExhausted = false;
@@ -221,10 +249,10 @@ export class GeminiBalancer {
     const token = tokens.find(t => t.key === key);
     if (token && !token.isPremium) {
       const now = Date.now();
-      const dayStart = new Date(now).setHours(0, 0, 0, 0);
-      const lastUsedDay = new Date(token.lastUsed).setHours(0, 0, 0, 0);
+      const currentPacificDayStart = getPacificDayStart(now);
+      const lastUsedPacificDayStart = getPacificDayStart(token.lastUsed || now);
       
-      if (dayStart !== lastUsedDay) {
+      if (currentPacificDayStart !== lastUsedPacificDayStart) {
         token.requestCount = 0;
         token.remainingQuota = token.dailyLimit;
         token.quotaExhausted = false;
