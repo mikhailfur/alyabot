@@ -1,22 +1,8 @@
-import { Telegraf } from 'telegraf';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const TEST_USER_ID = parseInt(process.env.TEST_USER_ID || '0');
-
-if (!BOT_TOKEN) {
-  console.error('❌ TELEGRAM_BOT_TOKEN не установлен');
-  process.exit(1);
-}
-
-if (!TEST_USER_ID) {
-  console.error('❌ TEST_USER_ID не установлен');
-  process.exit(1);
-}
-
-const bot = new Telegraf(BOT_TOKEN);
+const TEST_USER_ID = parseInt(process.env.TEST_USER_ID || '123456789');
 
 interface TestResult {
   name: string;
@@ -25,24 +11,63 @@ interface TestResult {
   duration: number;
 }
 
-async function testCommand(command: string, expectedResponse?: string): Promise<TestResult> {
+async function testCommand(command: string, userId: number, database: any): Promise<TestResult> {
   const startTime = Date.now();
   try {
-    const response = await bot.telegram.sendMessage(TEST_USER_ID, command);
-    const duration = Date.now() - startTime;
-    
-    if (response && response.message_id) {
-      return {
-        name: `Команда ${command}`,
-        passed: true,
-        duration
-      };
+    switch (command) {
+      case '/start':
+        await database.createOrUpdateUser(
+          userId,
+          `test_user_${userId}`,
+          'Test',
+          'User',
+          undefined
+        );
+        const user = await database.getUser(userId);
+        if (!user) {
+          throw new Error('User was not created');
+        }
+        break;
+      case '/help':
+        // Просто проверяем доступность базы данных
+        await database.getUser(userId);
+        break;
+      case '/premium':
+        await database.getUser(userId);
+        await database.checkSubscription(userId);
+        break;
+      case '/settings':
+        const settings = await database.getUser(userId);
+        if (!settings) {
+          await database.createOrUpdateUser(
+            userId,
+            `test_user_${userId}`,
+            'Test',
+            'User',
+            undefined
+          );
+        }
+        break;
+      case '/stats':
+        await database.getUserStats(userId);
+        break;
+      case '/memory':
+        const history = await database.getChatHistory(userId, 20);
+        if (!Array.isArray(history)) {
+          throw new Error('Chat history is not an array');
+        }
+        break;
+      case '/info':
+        // Просто проверяем доступность базы данных
+        await database.getUser(userId);
+        break;
     }
+    
+    const duration = Date.now() - startTime;
     
     return {
       name: `Команда ${command}`,
-      passed: false,
-      error: 'Нет ответа от бота',
+      passed: true,
       duration
     };
   } catch (error: any) {
@@ -57,7 +82,11 @@ async function testCommand(command: string, expectedResponse?: string): Promise<
 }
 
 async function runStressTest() {
-  console.log('🚀 Запуск стресс-теста бота...\n');
+  console.log('🚀 Запуск стресс-теста бота (внутренняя обработка)...\n');
+  
+  // Динамически загружаем модуль базы данных
+  const dbModule = require('../dist/database');
+  const database = dbModule.database;
   
   const commands = ['/start', '/help', '/premium', '/settings', '/stats', '/memory', '/info'];
   const results: TestResult[] = [];
@@ -77,7 +106,8 @@ async function runStressTest() {
     
     for (const command of commands) {
       for (let j = 0; j < concurrentRequests; j++) {
-        batch.push(testCommand(command));
+        const userId = TEST_USER_ID + (i * 1000) + j;
+        batch.push(testCommand(command, userId, database));
       }
     }
     
@@ -92,7 +122,7 @@ async function runStressTest() {
     console.log(`   ❌ Ошибок: ${failed}`);
     console.log(`   ⏱️  Среднее время ответа: ${avgDuration.toFixed(0)}ms`);
     
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
   
   console.log('\n📈 Итоговая статистика:');
@@ -120,20 +150,28 @@ async function runStressTest() {
   const successRate = (totalPassed / results.length) * 100;
   if (successRate < 90) {
     console.error('\n❌ Тест провален: успешность менее 90%');
+    await database.close().catch(() => {});
     process.exit(1);
   }
   
   if (avgDuration > 5000) {
     console.error('\n❌ Тест провален: среднее время ответа более 5 секунд');
+    await database.close().catch(() => {});
     process.exit(1);
   }
   
   console.log('\n✅ Стресс-тест пройден успешно!');
+  await database.close();
   process.exit(0);
 }
 
-runStressTest().catch(error => {
+runStressTest().catch(async (error) => {
   console.error('❌ Критическая ошибка при выполнении стресс-теста:', error);
+  try {
+    const dbModuleClose = require('../dist/database');
+    await dbModuleClose.database.close();
+  } catch (e) {
+    // Игнорируем ошибки закрытия
+  }
   process.exit(1);
 });
-
