@@ -1213,10 +1213,9 @@ bot.on('text', async (ctx) => {
       if (!shouldRespond) return;
 
       const isPremium = await subscriptionManager.checkUserSubscription(userId);
-      const userApiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS;
-      const shouldUseQueue = !isPremium && !isGroup && !userApiKey;
+      const shouldUseQueue = !isPremium && !isGroup;
       
-      console.log(`[Queue] userId: ${userId}, isPremium: ${isPremium}, isGroup: ${isGroup}, userApiKey: ${!!userApiKey}, shouldUseQueue: ${shouldUseQueue}`);
+      console.log(`[Queue] userId: ${userId}, isPremium: ${isPremium}, isGroup: ${isGroup}, shouldUseQueue: ${shouldUseQueue}`);
       
       if (!isPremium && !isGroup) {
         const limitCheck = rateLimiter.canSendMessage(userId);
@@ -1271,25 +1270,25 @@ bot.on('text', async (ctx) => {
           return;
         }
       } catch (error: any) {
-        if (error instanceof RateLimitError) {
-          console.error('Ошибка rate limit от Gemini API:', error);
-          if (!isPremium && !isGroup && !userApiKey) {
-            const quota = geminiBalancer.getTotalFreeQuota();
-            if (quota.remaining <= 0) {
-              await ctx.reply('😴 *Аля устала!*\n\n' +
-                'Все FREE API ключи исчерпали дневной лимит запросов. ' +
-                'Приобрети Premium подписку, чтобы продолжить общение без ограничений! 💪', {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                  [Markup.button.callback('💎 Купить Premium', 'premium')],
-                ]),
-              });
-              return;
-            }
+      if (error instanceof RateLimitError) {
+        console.error('Ошибка rate limit от Gemini API:', error);
+        if (!isPremium && !isGroup) {
+          const quota = geminiBalancer.getTotalFreeQuota();
+          if (quota.remaining <= 0) {
+            await ctx.reply('😴 *Аля устала!*\n\n' +
+              'Все FREE API ключи исчерпали дневной лимит запросов. ' +
+              'Приобрети Premium подписку, чтобы продолжить общение без ограничений! 💪', {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('💎 Купить Premium', 'premium')],
+              ]),
+            });
+            return;
           }
-          await sendRateLimitMessage(ctx, true);
-          return;
         }
+        await sendRateLimitMessage(ctx, true);
+        return;
+      }
         if (error instanceof ProhibitedContentError) {
           console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
           await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
