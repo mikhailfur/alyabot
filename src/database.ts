@@ -450,6 +450,13 @@ class Database {
     await this.pool.execute(sql, [Date.now(), userId]);
   }
 
+  async getActiveUsersCount(minutes: number = 5): Promise<number> {
+    const sql = 'SELECT COUNT(DISTINCT user_id) as count FROM users WHERE last_active > ?';
+    const fiveMinutesAgo = Date.now() - (minutes * 60 * 1000);
+    const [rows]: any = await this.pool.execute(sql, [fiveMinutesAgo]);
+    return rows[0]?.count || 0;
+  }
+
   async setUserPremium(userId: number, isPremium: boolean, expiresAt?: number): Promise<void> {
     const sql = 'UPDATE users SET is_premium = ?, subscription_until = ? WHERE user_id = ?';
     await this.pool.execute(sql, [isPremium ? 1 : 0, expiresAt || null, userId]);

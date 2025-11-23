@@ -1292,6 +1292,45 @@ function scheduleNextBroadcast(): void {
 
 scheduleNextBroadcast();
 
+async function updateBotDescription(): Promise<void> {
+  try {
+    const activeUsers = await database.getActiveUsersCount(5);
+    
+    let loadStatus = '🟢';
+    let loadText = 'Низкая';
+    if (activeUsers >= 20) {
+      loadStatus = '🔴';
+      loadText = 'Повышенная';
+    } else if (activeUsers >= 10) {
+      loadStatus = '🟡';
+      loadText = 'Средняя';
+    }
+    
+    const description = `🤖 AI-компаньон Аля из аниме "Аля иногда кокетничает со мной по-русски"
+
+💬 Сейчас общается: ${activeUsers} чел.
+${loadStatus} Загруженность: ${loadText}
+
+✨ Бесплатно: общение, память, группы
+⭐ Premium: режимы, фото, голос, инициативные сообщения
+
+Просто напиши мне что-нибудь! 😊`;
+    
+    await bot.telegram.setMyDescription(description);
+    logger.debug('Описание бота обновлено', { activeUsers, loadText });
+  } catch (error) {
+    logger.error('Ошибка при обновлении описания бота', error);
+  }
+}
+
+cron.schedule('* * * * *', async () => {
+  await updateBotDescription();
+}, {
+  timezone: 'Europe/Moscow'
+});
+
+updateBotDescription();
+
 bot.launch();
 
 logger.info('Бот Аля запущен! 🤖');
