@@ -173,16 +173,15 @@ async function runCommandTests() {
   console.log('\n✅ Все команды работают корректно!');
   
   // Закрываем соединение с базой данных
-  const dbModule = require('../dist/database');
-  await dbModule.database.close();
+  await database.close();
   process.exit(0);
 }
 
 runCommandTests().catch(async (error) => {
   console.error('❌ Критическая ошибка при тестировании команд:', error);
   try {
-    const dbModule = require('../dist/database');
-    await dbModule.database.close();
+    const dbModuleClose = require('../dist/database');
+    await dbModuleClose.database.close();
   } catch (e) {
     // Игнорируем ошибки закрытия
   }
