@@ -1,6 +1,6 @@
 import { Telegraf } from 'telegraf';
 import { minimaxTTS } from './minimax';
-import { GeminiClient } from './gemini-client';
+import { GeminiClient, ProhibitedContentError } from './gemini-client';
 import { config } from './config';
 
 export class VoiceHandler {

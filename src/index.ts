@@ -13,7 +13,7 @@ import { VoiceHandler } from './voice';
 import { ImageProcessor } from './image';
 import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
-import { GeminiClient, RateLimitError } from './gemini-client';
+import { GeminiClient, RateLimitError, ProhibitedContentError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
 import { logger } from './logger';
 
@@ -51,6 +51,49 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('💎 Купить Premium', 'premium')],
   ]);
+
+  if (imageExists) {
+    await ctx.replyWithPhoto({ source: imagePath }, {
+      caption: message,
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  } else {
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  }
+}
+
+async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium: boolean): Promise<void> {
+  const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
+  let imageExists = false;
+  try {
+    await fs.promises.access(imagePath);
+    imageExists = true;
+  } catch {
+    imageExists = false;
+  }
+
+  let message: string;
+  let keyboard: any;
+
+  if (isPremium) {
+    message = `Вы отправляете запрос который содержит NSFW (19+) Контент.\n\n` +
+      `Чтобы иметь возможность общаться с Алей на интимные темы, в том числе 19+ RolePlay включите режим NSFW в настройках`;
+
+    keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔥 Включить NSFW режим', 'mode_nsfw')],
+    ]);
+  } else {
+    message = `Вы отправляете запрос который содержит NSFW (19+) Контент.\n\n` +
+      `Чтобы иметь возможность общаться с Алей на интимные темы, в том числе 19+ RolePlay купите подписку`;
+
+    keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('💎 Купить Premium', 'premium')],
+    ]);
+  }
 
   if (imageExists) {
     await ctx.replyWithPhoto({ source: imagePath }, {
@@ -965,12 +1008,18 @@ bot.on('photo', async (ctx) => {
       text = await geminiClient.generateContent({
         prompt: fullPrompt,
         isPremium,
-        maxRetries: 3
+        maxRetries: 3,
+        behaviorMode
       });
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API при обработке фото:', error);
         await sendRateLimitMessage(ctx, true);
+        return;
+      }
+      if (error instanceof ProhibitedContentError) {
+        console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке фото:', error);
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
         return;
       }
       console.error('Ошибка при генерации ответа на фото через Gemini:', error);
@@ -1050,12 +1099,18 @@ bot.on('voice', async (ctx) => {
       text = await geminiClient.generateContent({
         prompt: fullPrompt,
         isPremium,
-        maxRetries: 3
+        maxRetries: 3,
+        behaviorMode
       });
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API при обработке голосового:', error);
         await sendRateLimitMessage(ctx, true);
+        return;
+      }
+      if (error instanceof ProhibitedContentError) {
+        console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке голосового:', error);
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
         return;
       }
       console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
@@ -1153,7 +1208,7 @@ bot.on('text', async (ctx) => {
     const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
     const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
     
-    const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode);
+    const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode, !isGroup);
     const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
     
     let text: string;
@@ -1161,12 +1216,23 @@ bot.on('text', async (ctx) => {
       text = await geminiClient.generateContent({
         prompt: fullPrompt,
         isPremium,
-        maxRetries: 3
+        maxRetries: 3,
+        behaviorMode
       });
+      
+      if (text.trim() === '[NSFW_BLOCKED]' || text.trim().includes('[NSFW_BLOCKED]')) {
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        return;
+      }
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API:', error);
         await sendRateLimitMessage(ctx, true);
+        return;
+      }
+      if (error instanceof ProhibitedContentError) {
+        console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
+        await sendProhibitedContentMessage(ctx, userId, isPremium);
         return;
       }
       console.error('Ошибка при генерации ответа через Gemini:', error);

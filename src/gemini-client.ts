@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import { GoogleGenerativeAI, GenerativeModel, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { GeminiBalancer } from './gemini-balancer';
 import { database } from './database';
 import { logger } from './logger';
@@ -7,12 +7,20 @@ interface GenerateContentOptions {
   prompt: string | (string | any)[];
   isPremium?: boolean;
   maxRetries?: number;
+  behaviorMode?: string;
 }
 
 export class RateLimitError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RateLimitError';
+  }
+}
+
+export class ProhibitedContentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProhibitedContentError';
   }
 }
 
@@ -62,15 +70,36 @@ export class GeminiClient {
     }
   }
 
+  private getSafetySettings(behaviorMode?: string): any[] {
+    if (behaviorMode === 'nsfw') {
+      return [
+        {
+          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+          threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+      ];
+    }
+    return [];
+  }
+
   async generateContent(options: GenerateContentOptions): Promise<string> {
-    const { prompt, isPremium = false, maxRetries = 3 } = options;
+    const { prompt, isPremium = false, maxRetries = 3, behaviorMode } = options;
     let lastError: any = null;
     const usedTokens = new Set<string>();
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const genAI = this.balancer.getToken(isPremium);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const safetySettings = this.getSafetySettings(behaviorMode);
+        const modelConfig: any = { model: 'gemini-2.5-flash' };
+        if (safetySettings.length > 0) {
+          modelConfig.safetySettings = safetySettings;
+        }
+        const model = genAI.getGenerativeModel(modelConfig);
         
         const tokenKey = this.getTokenKey(genAI, isPremium);
         if (tokenKey) {
@@ -85,13 +114,17 @@ export class GeminiClient {
       } catch (error: any) {
         lastError = error;
         
+        const blockReason = error?.response?.promptFeedback?.blockReason;
+        if (blockReason === 'PROHIBITED_CONTENT') {
+          throw new ProhibitedContentError('PROHIBITED_CONTENT');
+        }
+        
         const errorCode = error.code || error.status || error.statusCode;
         const is429 = errorCode === 429 || 
                      error.message?.toLowerCase().includes('429') ||
                      error.message?.toLowerCase().includes('too many requests') ||
                      error.message?.toLowerCase().includes('rate limit');
         
-        // Записываем ошибку 429 в базу данных
         if (is429) {
           try {
             await database.recordApiError('gemini_429', 429);
@@ -128,9 +161,14 @@ export class GeminiClient {
     throw lastError || new Error('Не удалось выполнить запрос после всех попыток');
   }
 
-  getModel(isPremium: boolean = false): GenerativeModel {
+  getModel(isPremium: boolean = false, behaviorMode?: string): GenerativeModel {
     const genAI = this.balancer.getToken(isPremium);
-    return genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const safetySettings = this.getSafetySettings(behaviorMode);
+    const modelConfig: any = { model: 'gemini-2.5-flash' };
+    if (safetySettings.length > 0) {
+      modelConfig.safetySettings = safetySettings;
+    }
+    return genAI.getGenerativeModel(modelConfig);
   }
 }
 

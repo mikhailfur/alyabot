@@ -3,7 +3,7 @@ import { database } from './database';
 import { alyaPromptPrivate } from './prompt';
 import { VoiceHandler } from './voice';
 import { minimaxTTS } from './minimax';
-import { GeminiClient } from './gemini-client';
+import { GeminiClient, ProhibitedContentError } from './gemini-client';
 
 export class PremiumBroadcast {
   private bot: Telegraf;
