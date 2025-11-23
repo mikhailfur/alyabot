@@ -1,4 +1,4 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import { GeminiBalancer } from './gemini-balancer';
 
 interface QueueItem {
@@ -91,6 +91,7 @@ export class QueueManager {
 
   private async sendQueueMessage(item: QueueItem): Promise<void> {
     try {
+      const quota = this.balancer.getTotalFreeQuota();
       const waitSeconds = Math.ceil(item.estimatedWaitTime / 1000);
       const minutes = Math.floor(waitSeconds / 60);
       const seconds = waitSeconds % 60;
@@ -99,13 +100,26 @@ export class QueueManager {
         ? `${minutes} ${this.pluralize(minutes, 'минуту', 'минуты', 'минут')} ${seconds > 0 ? `и ${seconds} ${this.pluralize(seconds, 'секунду', 'секунды', 'секунд')}` : ''}`.trim()
         : `${seconds} ${this.pluralize(seconds, 'секунду', 'секунды', 'секунд')}`;
 
+      const statusEmoji = quota.percentage < 40 ? '🟢' : quota.percentage < 60 ? '🟡' : quota.percentage < 80 ? '🟠' : '🔴';
+      const statusText = quota.percentage < 40 ? 'Низкая' : quota.percentage < 60 ? 'Средняя' : quota.percentage < 80 ? 'Высокая' : 'Критическая';
+
       const message = `⏳ *Ожидание в очереди*\n\n` +
         `📊 Твой запрос поставлен в очередь\n` +
         `⏰ Примерное время ожидания: *${timeText}*\n\n` +
+        `${statusEmoji} *Статус загруженности API:* ${statusText} (${quota.percentage.toFixed(1)}%)\n` +
+        `📈 Использовано: ${quota.used}/${quota.total}\n` +
+        `✅ Осталось: ${quota.remaining}\n\n` +
+        `💎 *Хочешь общаться без очереди?*\n` +
+        `Купи Premium подписку и отправляй сообщения мгновенно! 💪\n\n` +
         `💡 Это сообщение будет автоматически обновляться`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('💎 Купить Premium', 'premium')],
+      ]);
 
       const sent = await this.bot.telegram.sendMessage(item.chatId, message, {
         parse_mode: 'Markdown',
+        ...keyboard,
       });
 
       item.queueMessageId = sent.message_id;
@@ -133,18 +147,34 @@ export class QueueManager {
         ? `${minutes} ${this.pluralize(minutes, 'минуту', 'минуты', 'минут')} ${seconds > 0 ? `и ${seconds} ${this.pluralize(seconds, 'секунду', 'секунды', 'секунд')}` : ''}`.trim()
         : `${seconds} ${this.pluralize(seconds, 'секунду', 'секунды', 'секунд')}`;
 
+      const quota = this.balancer.getTotalFreeQuota();
       const position = this.queue.indexOf(item) + 1;
+      const statusEmoji = quota.percentage < 40 ? '🟢' : quota.percentage < 60 ? '🟡' : quota.percentage < 80 ? '🟠' : '🔴';
+      const statusText = quota.percentage < 40 ? 'Низкая' : quota.percentage < 60 ? 'Средняя' : quota.percentage < 80 ? 'Высокая' : 'Критическая';
+
       const message = `⏳ *Ожидание в очереди*\n\n` +
         `📊 Твой запрос в очереди (позиция: ${position})\n` +
         `⏰ Осталось ждать: *${timeText}*\n\n` +
+        `${statusEmoji} *Статус загруженности API:* ${statusText} (${quota.percentage.toFixed(1)}%)\n` +
+        `📈 Использовано: ${quota.used}/${quota.total}\n` +
+        `✅ Осталось: ${quota.remaining}\n\n` +
+        `💎 *Хочешь общаться без очереди?*\n` +
+        `Купи Premium подписку и отправляй сообщения мгновенно! 💪\n\n` +
         `💡 Это сообщение будет автоматически обновляться`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('💎 Купить Premium', 'premium')],
+      ]);
 
       await this.bot.telegram.editMessageText(
         item.chatId,
         item.queueMessageId,
         undefined,
         message,
-        { parse_mode: 'Markdown' }
+        { 
+          parse_mode: 'Markdown',
+          ...keyboard,
+        }
       );
     } catch (error: any) {
       if (!error.message?.includes('message is not modified') && 
