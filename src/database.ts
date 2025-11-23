@@ -651,6 +651,30 @@ class Database {
     };
   }
 
+  async deleteUser(userId: number): Promise<void> {
+    try {
+      await this.pool.execute('DELETE FROM users WHERE user_id = ?', [userId]);
+      await this.pool.execute('DELETE FROM chat_history WHERE user_id = ?', [userId]);
+      await this.pool.execute('DELETE FROM subscriptions WHERE user_id = ?', [userId]);
+      await this.pool.execute('DELETE FROM referral_tracking WHERE user_id = ?', [userId]);
+    } catch (error) {
+      console.error('Ошибка при удалении пользователя:', error);
+      throw error;
+    }
+  }
+
+  async checkUserBlocked(userId: number, bot: any): Promise<boolean> {
+    try {
+      await bot.telegram.getChat(userId);
+      return false;
+    } catch (error: any) {
+      if (error.code === 403 || error.response?.error_code === 403) {
+        return true;
+      }
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }

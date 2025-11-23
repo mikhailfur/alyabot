@@ -137,6 +137,7 @@ export class AdminPanel {
         [Markup.button.callback('🤖 Управление моделями', 'admin_models')],
         [Markup.button.callback('🔗 Реферальные ссылки', 'admin_referrals')],
         [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
+        [Markup.button.callback('🧹 Очистить заблокированных', 'admin_cleanup_blocked')],
         [Markup.button.callback('📊 Детальная статистика', 'admin_stats')],
         [Markup.button.callback('🔄 Обновить', 'admin_refresh')],
       ]));
@@ -503,6 +504,11 @@ export class AdminPanel {
     this.bot.action('admin_broadcast_send', async (ctx) => {
       await ctx.answerCbQuery();
       await this.sendBroadcast(ctx);
+    });
+
+    this.bot.action('admin_cleanup_blocked', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.cleanupBlockedUsers(ctx);
     });
 
     this.bot.action('admin_create_referral', async (ctx) => {
@@ -1056,8 +1062,14 @@ export class AdminPanel {
           await new Promise(resolve => setTimeout(resolve, 50));
         } catch (error: any) {
           errorCount++;
-          if (error.code === 403) {
+          if (error.code === 403 || error.response?.error_code === 403) {
             console.log(`Пользователь ${user.user_id} заблокировал бота`);
+            try {
+              await database.deleteUser(user.user_id);
+              console.log(`Удалён заблокированный пользователь: ${user.user_id}`);
+            } catch (deleteError) {
+              console.error(`Ошибка при удалении пользователя ${user.user_id}:`, deleteError);
+            }
           } else {
             console.error(`Ошибка отправки пользователю ${user.user_id}:`, error.message);
           }
@@ -1079,6 +1091,63 @@ export class AdminPanel {
       console.error('Ошибка при рассылке:', error);
       this.sessions.delete(ctx.from.id);
       await this.safeReply(ctx, `❌ Ошибка при рассылке: ${error.message || 'Неизвестная ошибка'}`);
+    }
+  }
+
+  async cleanupBlockedUsers(ctx: any): Promise<void> {
+    try {
+      if (!this.isAdmin(ctx.from.id)) return;
+
+      await this.safeReply(ctx, '🔍 Проверяю пользователей... Это может занять некоторое время.');
+
+      const users = await database.getAllUsers();
+      let blockedCount = 0;
+      let checkedCount = 0;
+      const totalUsers = users.length;
+
+      for (const user of users) {
+        try {
+          checkedCount++;
+          const isBlocked = await database.checkUserBlocked(user.user_id, this.bot);
+          
+          if (isBlocked) {
+            await database.deleteUser(user.user_id);
+            blockedCount++;
+            console.log(`Удалён заблокированный пользователь: ${user.user_id}`);
+          }
+
+          if (checkedCount % 10 === 0) {
+            try {
+              await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                ctx.callbackQuery?.message?.message_id,
+                undefined,
+                `🔍 Проверка пользователей...\n\n` +
+                `Проверено: ${checkedCount}/${totalUsers}\n` +
+                `Найдено заблокированных: ${blockedCount}`
+              );
+            } catch (e) {
+            }
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error: any) {
+          console.error(`Ошибка при проверке пользователя ${user.user_id}:`, error);
+        }
+      }
+
+      await this.safeReply(ctx,
+        `✅ *Очистка завершена*\n\n` +
+        `📊 Проверено пользователей: ${checkedCount}\n` +
+        `🗑️ Удалено заблокированных: ${blockedCount}\n` +
+        `👥 Осталось пользователей: ${totalUsers - blockedCount}`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Назад', 'admin_panel')]
+        ])
+      );
+    } catch (error: any) {
+      console.error('Ошибка при очистке заблокированных пользователей:', error);
+      await this.safeReply(ctx, `❌ Ошибка при очистке: ${error.message || 'Неизвестная ошибка'}`);
     }
   }
 }

@@ -143,8 +143,15 @@ export class PremiumBroadcast {
     } catch (error: any) {
       console.error(`Ошибка при отправке пользователю ${userId}:`, error?.message || error);
       
-      if (error?.response?.error_code === 403) {
+      if (error?.response?.error_code === 403 || error?.code === 403) {
         console.log(`Пользователь ${userId} заблокировал бота`);
+        try {
+          const { database } = await import('./database');
+          await database.deleteUser(userId);
+          console.log(`Удалён заблокированный пользователь: ${userId}`);
+        } catch (deleteError) {
+          console.error(`Ошибка при удалении пользователя ${userId}:`, deleteError);
+        }
       }
     }
   }
