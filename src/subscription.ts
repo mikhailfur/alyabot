@@ -1,7 +1,6 @@
 import { Telegraf } from 'telegraf';
 import { database } from './database';
 import { config } from './config';
-import { logger } from './logger';
 
 export class SubscriptionManager {
   private bot: Telegraf;
@@ -29,18 +28,8 @@ export class SubscriptionManager {
         await database.setUserPremium(userId, false);
         return false;
       }
-    } catch (error: any) {
-      const errorCode = error?.response?.error_code;
-      const errorDescription = error?.response?.description || error?.message || '';
-      
-      if (errorCode === 400 && errorDescription.includes('chat not found')) {
-        logger.debug('Чат для проверки подписки не найден, используем данные из БД', { userId, chatId: config.tributeChannelId });
-      } else if (errorCode === 403 && errorDescription.includes('bot is not a member')) {
-        logger.debug('Бот не является участником канала для проверки подписки, используем данные из БД', { userId, chatId: config.tributeChannelId });
-      } else {
-        logger.warn('Ошибка при проверке подписки через канал', { userId, error: errorDescription, errorCode });
-      }
-      
+    } catch (error) {
+      console.error('Ошибка при проверке подписки:', error);
       return await database.checkSubscription(userId);
     }
   }
@@ -99,7 +88,7 @@ export class SubscriptionManager {
           }
         }
       } catch (error) {
-        logger.error('Ошибка при периодической проверке подписок', error);
+        console.error('Ошибка при периодической проверке подписок:', error);
       }
     }, config.subscriptionCheckInterval);
   }
