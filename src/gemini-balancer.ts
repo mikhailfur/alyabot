@@ -18,6 +18,7 @@ interface TokenInstance {
 
 function getPacificDayStart(timestamp: number): number {
   const date = new Date(timestamp);
+  
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Los_Angeles',
     year: 'numeric',
@@ -26,22 +27,33 @@ function getPacificDayStart(timestamp: number): number {
   });
   
   const pacificDateStr = formatter.format(date);
+  const [year, month, day] = pacificDateStr.split('-').map(Number);
   
-  const pstMidnight = new Date(`${pacificDateStr}T00:00:00-08:00`);
-  const pdtMidnight = new Date(`${pacificDateStr}T00:00:00-07:00`);
+  const testDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
   
-  const pstPacific = pstMidnight.toLocaleString('en-US', { 
+  const pacificFormatter = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false
   });
   
-  if (pstPacific.startsWith('00:') || pstPacific === '12:00 AM') {
-    return pstMidnight.getTime();
-  }
+  const pacificParts = pacificFormatter.formatToParts(testDate);
+  const pacificYear = parseInt(pacificParts.find(p => p.type === 'year')?.value || String(year));
+  const pacificMonth = parseInt(pacificParts.find(p => p.type === 'month')?.value || String(month));
+  const pacificDay = parseInt(pacificParts.find(p => p.type === 'day')?.value || String(day));
+  const pacificHour = parseInt(pacificParts.find(p => p.type === 'hour')?.value || '12');
   
-  return pdtMidnight.getTime();
+  const pacificNoon = new Date(Date.UTC(pacificYear, pacificMonth - 1, pacificDay, pacificHour, 0, 0));
+  const offset = testDate.getTime() - pacificNoon.getTime();
+  
+  const pacificMidnightUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+  pacificMidnightUTC.setTime(pacificMidnightUTC.getTime() - offset);
+  
+  return pacificMidnightUTC.getTime();
 }
 
 function hashKey(key: string): string {
@@ -95,6 +107,9 @@ export class GeminiBalancer {
       const allKeysData = await database.getAllApiKeysData();
       const keysDataMap = new Map(allKeysData.map(data => [data.key_hash, data]));
 
+      const now = Date.now();
+      const currentPacificDayStart = getPacificDayStart(now);
+
       for (const token of [...this.freeTokens, ...this.premiumTokens]) {
         const keyHash = hashKey(token.key);
         const dbData = keysDataMap.get(keyHash);
@@ -105,9 +120,26 @@ export class GeminiBalancer {
           token.lastQuotaCheck = dbData.last_quota_check || 0;
           
           if (!token.isPremium) {
-            token.remainingQuota = dbData.remaining_quota ?? 250;
-            token.quotaExhausted = dbData.quota_exhausted ? true : false;
-            token.error429Date = dbData.error_429_date || 0;
+            const lastCheckPacificDayStart = getPacificDayStart(token.lastQuotaCheck || now);
+            const error429PacificDayStart = dbData.error_429_date ? getPacificDayStart(dbData.error_429_date) : 0;
+            
+            if (currentPacificDayStart !== lastCheckPacificDayStart) {
+              token.requestCount = 0;
+              
+              if (error429PacificDayStart !== currentPacificDayStart) {
+                token.remainingQuota = token.dailyLimit;
+                token.quotaExhausted = false;
+                token.error429Date = 0;
+              } else {
+                token.remainingQuota = dbData.remaining_quota ?? 250;
+                token.quotaExhausted = dbData.quota_exhausted ? true : false;
+                token.error429Date = dbData.error_429_date || 0;
+              }
+            } else {
+              token.remainingQuota = dbData.remaining_quota ?? 250;
+              token.quotaExhausted = dbData.quota_exhausted ? true : false;
+              token.error429Date = dbData.error_429_date || 0;
+            }
           } else {
             token.remainingQuota = Infinity;
           }
