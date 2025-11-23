@@ -136,6 +136,18 @@ class Database {
       await this.pool.execute(createReferralLinksTableSQL);
       await this.pool.execute(createReferralTrackingTableSQL);
       
+      const createApiErrorsTableSQL = `
+        CREATE TABLE IF NOT EXISTS api_errors (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          error_type VARCHAR(50) NOT NULL,
+          error_code INT,
+          timestamp BIGINT NOT NULL,
+          INDEX idx_type_timestamp (error_type, timestamp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      await this.pool.execute(createApiErrorsTableSQL);
+      
       try {
         const [existing] = await this.pool.execute(`
           SELECT COUNT(*) as count 
@@ -454,6 +466,18 @@ class Database {
     const sql = 'SELECT COUNT(DISTINCT user_id) as count FROM users WHERE last_active > ?';
     const fiveMinutesAgo = Date.now() - (minutes * 60 * 1000);
     const [rows]: any = await this.pool.execute(sql, [fiveMinutesAgo]);
+    return rows[0]?.count || 0;
+  }
+
+  async recordApiError(errorType: string, errorCode: number): Promise<void> {
+    const sql = 'INSERT INTO api_errors (error_type, error_code, timestamp) VALUES (?, ?, ?)';
+    await this.pool.execute(sql, [errorType, errorCode, Date.now()]);
+  }
+
+  async getApiErrorCount(errorType: string, hours: number = 3): Promise<number> {
+    const sql = 'SELECT COUNT(*) as count FROM api_errors WHERE error_type = ? AND timestamp > ?';
+    const hoursAgo = Date.now() - (hours * 60 * 60 * 1000);
+    const [rows]: any = await this.pool.execute(sql, [errorType, hoursAgo]);
     return rows[0]?.count || 0;
   }
 

@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 import { GeminiBalancer } from './gemini-balancer';
+import { database } from './database';
+import { logger } from './logger';
 
 interface GenerateContentOptions {
   prompt: string | (string | any)[];
@@ -88,6 +90,16 @@ export class GeminiClient {
                      error.message?.toLowerCase().includes('429') ||
                      error.message?.toLowerCase().includes('too many requests') ||
                      error.message?.toLowerCase().includes('rate limit');
+        
+        // Записываем ошибку 429 в базу данных
+        if (is429) {
+          try {
+            await database.recordApiError('gemini_429', 429);
+            logger.warn('Записана ошибка 429 от Gemini API', { attempt: attempt + 1, maxRetries });
+          } catch (dbError) {
+            logger.error('Ошибка при записи ошибки 429 в базу данных', dbError);
+          }
+        }
         
         if (is429 && attempt === maxRetries - 1) {
           throw new RateLimitError('API rate limit exceeded');

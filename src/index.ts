@@ -1295,13 +1295,27 @@ scheduleNextBroadcast();
 async function updateBotDescription(): Promise<void> {
   try {
     const activeUsers = await database.getActiveUsersCount(5);
+    const error429Count = await database.getApiErrorCount('gemini_429', 3);
     
     let loadStatus = '🟢';
     let loadText = 'Низкая';
+    
+    // Определяем загруженность на основе количества пользователей
     if (activeUsers >= 20) {
       loadStatus = '🔴';
       loadText = 'Повышенная';
     } else if (activeUsers >= 10) {
+      loadStatus = '🟡';
+      loadText = 'Средняя';
+    }
+    
+    // Учитываем ошибки 429 от Gemini API за последние 3 часа
+    // Если более 8 ошибок - повышенная загруженность
+    // Если более 3 ошибок - средняя загруженность
+    if (error429Count >= 8) {
+      loadStatus = '🔴';
+      loadText = 'Повышенная';
+    } else if (error429Count > 3 && loadStatus !== '🔴') {
       loadStatus = '🟡';
       loadText = 'Средняя';
     }
@@ -1317,7 +1331,7 @@ async function updateBotDescription(): Promise<void> {
     
     await bot.telegram.setMyShortDescription(shortDescription);
     await bot.telegram.setMyDescription(fullDescription);
-    logger.debug('Описание бота обновлено', { activeUsers, loadText });
+    logger.debug('Описание бота обновлено', { activeUsers, error429Count, loadText });
   } catch (error) {
     logger.error('Ошибка при обновлении описания бота', error);
   }
