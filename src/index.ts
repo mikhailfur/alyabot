@@ -1219,11 +1219,6 @@ bot.on('text', async (ctx) => {
         maxRetries: 3,
         behaviorMode
       });
-      
-      if (text.trim() === '[NSFW_BLOCKED]' || text.trim().includes('[NSFW_BLOCKED]')) {
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
-        return;
-      }
     } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API:', error);
