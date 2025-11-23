@@ -394,108 +394,16 @@ bot.command('clear', async (ctx) => {
   }
 });
 
-async function handleBroadcast(ctx: any, messageText: string, hasPhoto: boolean, photoFileId?: string) {
-  try {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    console.log('Broadcast command received, userId:', userId, 'isAdmin:', adminPanel.isAdmin(userId));
-
-    if (!adminPanel.isAdmin(userId)) {
-      await ctx.reply('❌ Эта команда доступна только администраторам!');
-      return;
-    }
-
-    if (!messageText && !hasPhoto) {
-      await ctx.reply('📢 *Рассылка сообщений*\n\n' +
-        'Использование:\n' +
-        '`/broadcast текст сообщения`\n\n' +
-        'Или отправь фото с подписью:\n' +
-        '`/broadcast текст подписи`\n\n' +
-        'Сообщение будет отправлено всем пользователям бота.', {
-        parse_mode: 'Markdown'
-      });
-      return;
-    }
-
-    await ctx.reply('⏳ Начинаю рассылку...');
-
-    const users = await database.getAllUsers();
-    console.log('Broadcast: found', users.length, 'users');
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const user of users) {
-      try {
-        if (hasPhoto && photoFileId) {
-          await bot.telegram.sendPhoto(user.user_id, photoFileId, {
-            caption: messageText || undefined,
-            parse_mode: messageText ? 'Markdown' : undefined
-          });
-        } else {
-          await bot.telegram.sendMessage(user.user_id, messageText, {
-            parse_mode: 'Markdown'
-          });
-        }
-        successCount++;
-        
-        await new Promise(resolve => setTimeout(resolve, 50));
-      } catch (error: any) {
-        errorCount++;
-        if (error.code === 403) {
-          console.log(`Пользователь ${user.user_id} заблокировал бота`);
-        } else {
-          console.error(`Ошибка отправки пользователю ${user.user_id}:`, error.message);
-        }
-      }
-    }
-
-    await ctx.reply(`✅ *Рассылка завершена*\n\n` +
-      `✅ Успешно: ${successCount}\n` +
-      `❌ Ошибок: ${errorCount}\n` +
-      `📊 Всего пользователей: ${users.length}`, {
-      parse_mode: 'Markdown'
-    });
-  } catch (error: any) {
-    console.error('Ошибка при рассылке:', error);
-    await ctx.reply(`❌ Ошибка при рассылке: ${error.message || 'Неизвестная ошибка'}`);
-  }
-}
-
 bot.command('broadcast', async (ctx) => {
-  console.log('🔴 Broadcast command handler called!', {
-    userId: ctx.from?.id,
-    chatId: ctx.chat?.id,
-    messageType: ctx.message ? Object.keys(ctx.message).join(', ') : 'no message'
-  });
-  
-  try {
-    const message = ctx.message as any;
-    const hasPhoto = 'photo' in message && message.photo && Array.isArray(message.photo) && message.photo.length > 0;
-    let messageText = '';
-    let photoFileId: string | undefined;
-    
-    console.log('Broadcast: hasPhoto =', hasPhoto);
-    
-    if (hasPhoto) {
-      const photo = message.photo[message.photo.length - 1];
-      photoFileId = photo.file_id;
-      messageText = ('caption' in message && message.caption) 
-        ? message.caption.replace('/broadcast', '').trim() 
-        : '';
-      console.log('Broadcast: photo found, caption =', messageText);
-    } else {
-      messageText = ('text' in message && message.text) 
-        ? message.text.replace('/broadcast', '').trim() 
-        : '';
-      console.log('Broadcast: text message =', messageText);
-    }
+  const userId = ctx.from?.id;
+  if (!userId) return;
 
-    await handleBroadcast(ctx, messageText, hasPhoto, photoFileId);
-  } catch (error: any) {
-    console.error('❌ Error in broadcast command handler:', error);
-    await ctx.reply(`❌ Ошибка: ${error.message || 'Неизвестная ошибка'}`);
+  if (!adminPanel.isAdmin(userId)) {
+    await ctx.reply('❌ Эта команда доступна только администраторам!');
+    return;
   }
+
+  await adminPanel.startBroadcast(ctx);
 });
 
 bot.action('menu', async (ctx) => {
@@ -961,17 +869,6 @@ bot.on('photo', async (ctx) => {
   try {
     if (!userId || !chatId) return;
 
-    const message = ctx.message as any;
-    const photoCaption = 'caption' in message ? message.caption : '';
-    
-    if (photoCaption && photoCaption.trim().startsWith('/broadcast')) {
-      const hasPhoto = true;
-      const photo = ctx.message.photo[ctx.message.photo.length - 1];
-      const photoFileId = photo.file_id;
-      const messageText = photoCaption.replace('/broadcast', '').trim();
-      await handleBroadcast(ctx, messageText, hasPhoto, photoFileId);
-      return;
-    }
 
     if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
       return;

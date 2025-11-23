@@ -136,6 +136,7 @@ export class AdminPanel {
         [Markup.button.callback('⭐ Premium пользователи', 'admin_premium')],
         [Markup.button.callback('🤖 Управление моделями', 'admin_models')],
         [Markup.button.callback('🔗 Реферальные ссылки', 'admin_referrals')],
+        [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
         [Markup.button.callback('📊 Детальная статистика', 'admin_stats')],
         [Markup.button.callback('🔄 Обновить', 'admin_refresh')],
       ]));
@@ -468,6 +469,42 @@ export class AdminPanel {
       await this.showReferralLinks(ctx);
     });
 
+    this.bot.action('admin_broadcast', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.startBroadcast(ctx);
+    });
+
+    this.bot.action('admin_broadcast_cancel', async (ctx) => {
+      await ctx.answerCbQuery();
+      this.sessions.delete(ctx.from.id);
+      await this.safeReply(ctx, '❌ Создание рассылки отменено', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_panel')]
+      ]));
+    });
+
+    this.bot.action('admin_broadcast_skip_media', async (ctx) => {
+      await ctx.answerCbQuery();
+      const session = this.sessions.get(ctx.from.id);
+      if (session?.creatingBroadcast) {
+        session.mediaType = null;
+        session.mediaFileId = null;
+        await this.askBroadcastText(ctx);
+      }
+    });
+
+    this.bot.action('admin_broadcast_skip_buttons', async (ctx) => {
+      await ctx.answerCbQuery();
+      const session = this.sessions.get(ctx.from.id);
+      if (session?.creatingBroadcast) {
+        await this.confirmBroadcast(ctx);
+      }
+    });
+
+    this.bot.action('admin_broadcast_send', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.sendBroadcast(ctx);
+    });
+
     this.bot.action('admin_create_referral', async (ctx) => {
       await ctx.answerCbQuery();
       await this.safeReply(ctx, 
@@ -579,6 +616,106 @@ export class AdminPanel {
           await this.showReferralLinkDetails(ctx, linkId);
         }
         this.sessions.delete(ctx.from.id);
+        return;
+      }
+
+      if (session?.creatingBroadcast) {
+        if (session.step === 'text') {
+          if (ctx.message.text.toLowerCase().trim() === '/skip') {
+            session.text = '';
+            await this.askBroadcastButtons(ctx);
+            return;
+          }
+          session.text = ctx.message.text;
+          await this.askBroadcastButtons(ctx);
+          return;
+        }
+
+        if (session.step === 'buttons') {
+          if (ctx.message.text.toLowerCase().trim() === '/skip') {
+            session.buttons = [];
+            await this.confirmBroadcast(ctx);
+            return;
+          }
+          const buttons = this.parseButtons(ctx.message.text);
+          if (buttons.length > 0) {
+            session.buttons = buttons;
+          } else {
+            await this.safeReply(ctx, '❌ Не удалось распознать кнопки. Проверь формат:\n`[Текст - ссылка]`', Markup.inlineKeyboard([
+              [Markup.button.callback('⏭️ Пропустить', 'admin_broadcast_skip_buttons')],
+              [Markup.button.callback('❌ Отмена', 'admin_broadcast_cancel')]
+            ]));
+            return;
+          }
+          await this.confirmBroadcast(ctx);
+          return;
+        }
+      }
+
+      return next();
+    });
+
+    this.bot.on('photo', async (ctx, next) => {
+      if (!this.isAdmin(ctx.from.id)) {
+        return next();
+      }
+
+      const session = this.sessions.get(ctx.from.id);
+      if (session?.creatingBroadcast && session.step === 'media') {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        session.mediaType = 'photo';
+        session.mediaFileId = photo.file_id;
+        session.text = ctx.message.caption || '';
+        
+        if (session.text) {
+          await this.askBroadcastButtons(ctx);
+        } else {
+          await this.askBroadcastText(ctx);
+        }
+        return;
+      }
+
+      return next();
+    });
+
+    this.bot.on('animation', async (ctx, next) => {
+      if (!this.isAdmin(ctx.from.id)) {
+        return next();
+      }
+
+      const session = this.sessions.get(ctx.from.id);
+      if (session?.creatingBroadcast && session.step === 'media') {
+        session.mediaType = 'animation';
+        session.mediaFileId = ctx.message.animation.file_id;
+        session.text = ctx.message.caption || '';
+        
+        if (session.text) {
+          await this.askBroadcastButtons(ctx);
+        } else {
+          await this.askBroadcastText(ctx);
+        }
+        return;
+      }
+
+      return next();
+    });
+
+    this.bot.on('voice', async (ctx, next) => {
+      if (!this.isAdmin(ctx.from.id)) {
+        return next();
+      }
+
+      const session = this.sessions.get(ctx.from.id);
+      if (session?.creatingBroadcast && session.step === 'media') {
+        session.mediaType = 'voice';
+        session.mediaFileId = ctx.message.voice.file_id;
+        session.text = ctx.message.caption || '';
+        
+        if (session.text) {
+          await this.askBroadcastButtons(ctx);
+        } else {
+          await this.askBroadcastText(ctx);
+        }
         return;
       }
 
@@ -713,6 +850,235 @@ export class AdminPanel {
     } catch (error) {
       console.error('Ошибка в showReferralStats:', error);
       await this.safeReply(ctx, '❌ Ошибка при загрузке статистики');
+    }
+  }
+
+  async startBroadcast(ctx: any): Promise<void> {
+    try {
+      if (!this.isAdmin(ctx.from.id)) return;
+
+      this.sessions.set(ctx.from.id, {
+        creatingBroadcast: true,
+        step: 'media',
+        mediaType: null,
+        mediaFileId: null,
+        text: '',
+        buttons: []
+      });
+
+      await this.safeEditMessage(ctx,
+        `📢 *Создание рассылки*\n\n` +
+        `Шаг 1/4: Медиа\n\n` +
+        `Отправь фото, GIF или голосовое сообщение для рассылки.\n` +
+        `Или нажми "Пропустить", чтобы отправить только текст.`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('⏭️ Пропустить', 'admin_broadcast_skip_media')],
+          [Markup.button.callback('❌ Отмена', 'admin_broadcast_cancel')]
+        ])
+      );
+    } catch (error) {
+      console.error('Ошибка в startBroadcast:', error);
+      await this.safeReply(ctx, '❌ Ошибка при создании рассылки');
+    }
+  }
+
+  async askBroadcastText(ctx: any): Promise<void> {
+    try {
+      if (!this.isAdmin(ctx.from.id)) return;
+
+      const session = this.sessions.get(ctx.from.id);
+      if (!session?.creatingBroadcast) return;
+
+      session.step = 'text';
+
+      const stepNumber = session.mediaType ? '2/4' : '1/4';
+      const message = session.mediaType
+        ? `📢 *Создание рассылки*\n\n` +
+          `Шаг ${stepNumber}: Текст сообщения\n\n` +
+          `Отправь текст сообщения для рассылки.\n` +
+          `Или отправь /skip, чтобы пропустить этот шаг.`
+        : `📢 *Создание рассылки*\n\n` +
+          `Шаг ${stepNumber}: Текст сообщения\n\n` +
+          `Отправь текст сообщения для рассылки.`;
+
+      await this.safeReply(ctx, message,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('❌ Отмена', 'admin_broadcast_cancel')]
+        ])
+      );
+    } catch (error) {
+      console.error('Ошибка в askBroadcastText:', error);
+      await this.safeReply(ctx, '❌ Ошибка');
+    }
+  }
+
+  async askBroadcastButtons(ctx: any): Promise<void> {
+    try {
+      if (!this.isAdmin(ctx.from.id)) return;
+
+      const session = this.sessions.get(ctx.from.id);
+      if (!session?.creatingBroadcast) return;
+
+      session.step = 'buttons';
+
+      await this.safeReply(ctx,
+        `📢 *Создание рассылки*\n\n` +
+        `Шаг 3/4: Кнопки (опционально)\n\n` +
+        `Отправь кнопки в формате:\n` +
+        `\`[Текст кнопки - ссылка]\`\n\n` +
+        `Пример:\n` +
+        `\`[Перейти на сайт - https://example.com]\`\n` +
+        `\`[Наш канал - https://t.me/channel]\`\n\n` +
+        `Можно добавить несколько кнопок, каждую с новой строки.\n` +
+        `Или нажми "Пропустить", если кнопки не нужны.`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('⏭️ Пропустить', 'admin_broadcast_skip_buttons')],
+          [Markup.button.callback('❌ Отмена', 'admin_broadcast_cancel')]
+        ])
+      );
+    } catch (error) {
+      console.error('Ошибка в askBroadcastButtons:', error);
+      await this.safeReply(ctx, '❌ Ошибка');
+    }
+  }
+
+  async confirmBroadcast(ctx: any): Promise<void> {
+    try {
+      if (!this.isAdmin(ctx.from.id)) return;
+
+      const session = this.sessions.get(ctx.from.id);
+      if (!session?.creatingBroadcast) return;
+
+      session.step = 'confirm';
+
+      let preview = `📢 *Предпросмотр рассылки*\n\n`;
+
+      if (session.mediaType) {
+        preview += `📎 Медиа: ${session.mediaType === 'photo' ? 'Фото' : session.mediaType === 'animation' ? 'GIF' : 'Голосовое'}\n`;
+      }
+
+      if (session.text) {
+        preview += `\n💬 Текст:\n${this.escapeMarkdown(session.text)}\n`;
+      }
+
+      if (session.buttons && session.buttons.length > 0) {
+        preview += `\n🔘 Кнопки:\n`;
+        for (const btn of session.buttons) {
+          preview += `• ${this.escapeMarkdown(btn.text)} → ${this.escapeMarkdown(btn.url)}\n`;
+        }
+      }
+
+      preview += `\n📊 Сообщение будет отправлено всем пользователям бота.`;
+
+      await this.safeReply(ctx, preview, Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Отправить рассылку', 'admin_broadcast_send')],
+        [Markup.button.callback('❌ Отмена', 'admin_broadcast_cancel')]
+      ]));
+    } catch (error) {
+      console.error('Ошибка в confirmBroadcast:', error);
+      await this.safeReply(ctx, '❌ Ошибка');
+    }
+  }
+
+  parseButtons(text: string): Array<{ text: string; url: string }> {
+    const buttons: Array<{ text: string; url: string }> = [];
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+    for (const line of lines) {
+      const match = line.match(/\[([^\]]+)\s*-\s*([^\]]+)\]/);
+      if (match) {
+        const buttonText = match[1].trim();
+        const buttonUrl = match[2].trim();
+        if (buttonText && buttonUrl && (buttonUrl.startsWith('http://') || buttonUrl.startsWith('https://') || buttonUrl.startsWith('tg://'))) {
+          buttons.push({ text: buttonText, url: buttonUrl });
+        }
+      }
+    }
+
+    return buttons;
+  }
+
+  async sendBroadcast(ctx: any): Promise<void> {
+    try {
+      if (!this.isAdmin(ctx.from.id)) return;
+
+      const session = this.sessions.get(ctx.from.id);
+      if (!session?.creatingBroadcast) {
+        await this.safeReply(ctx, '❌ Сессия создания рассылки не найдена');
+        return;
+      }
+
+      if (!session.mediaType && !session.text) {
+        await this.safeReply(ctx, '❌ Нельзя отправить пустую рассылку. Нужен хотя бы текст или медиа.');
+        return;
+      }
+
+      await this.safeReply(ctx, '⏳ Начинаю рассылку...');
+
+      const users = await database.getAllUsers();
+      let successCount = 0;
+      let errorCount = 0;
+
+      const keyboard = session.buttons && session.buttons.length > 0
+        ? Markup.inlineKeyboard(session.buttons.map((btn: { text: string; url: string }) => [Markup.button.url(btn.text, btn.url)]))
+        : undefined;
+
+      for (const user of users) {
+        try {
+          if (session.mediaType === 'photo' && session.mediaFileId) {
+            await this.bot.telegram.sendPhoto(user.user_id, session.mediaFileId, {
+              caption: session.text || undefined,
+              parse_mode: session.text ? 'Markdown' : undefined,
+              ...(keyboard || {})
+            });
+          } else if (session.mediaType === 'animation' && session.mediaFileId) {
+            await this.bot.telegram.sendAnimation(user.user_id, session.mediaFileId, {
+              caption: session.text || undefined,
+              parse_mode: session.text ? 'Markdown' : undefined,
+              ...(keyboard || {})
+            });
+          } else if (session.mediaType === 'voice' && session.mediaFileId) {
+            await this.bot.telegram.sendVoice(user.user_id, session.mediaFileId, {
+              caption: session.text || undefined,
+              parse_mode: session.text ? 'Markdown' : undefined,
+              ...(keyboard || {})
+            });
+          } else if (session.text) {
+            await this.bot.telegram.sendMessage(user.user_id, session.text, {
+              parse_mode: 'Markdown',
+              ...(keyboard || {})
+            });
+          } else {
+            continue;
+          }
+
+          successCount++;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (error: any) {
+          errorCount++;
+          if (error.code === 403) {
+            console.log(`Пользователь ${user.user_id} заблокировал бота`);
+          } else {
+            console.error(`Ошибка отправки пользователю ${user.user_id}:`, error.message);
+          }
+        }
+      }
+
+      this.sessions.delete(ctx.from.id);
+
+      await this.safeReply(ctx,
+        `✅ *Рассылка завершена*\n\n` +
+        `✅ Успешно: ${successCount}\n` +
+        `❌ Ошибок: ${errorCount}\n` +
+        `📊 Всего пользователей: ${users.length}`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Назад', 'admin_panel')]
+        ])
+      );
+    } catch (error: any) {
+      console.error('Ошибка при рассылке:', error);
+      this.sessions.delete(ctx.from.id);
+      await this.safeReply(ctx, `❌ Ошибка при рассылке: ${error.message || 'Неизвестная ошибка'}`);
     }
   }
 }
