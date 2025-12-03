@@ -4,9 +4,11 @@
   "description": "Telegram bot AI companion Alya from anime",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:webapp",
+    "build:webapp": "cd web-app && npm install && npm run build",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
+    "dev:webapp": "cd web-app && npm run dev",
     "watch": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
@@ -27,7 +29,9 @@
   "dependencies": {
     "@google/generative-ai": "^0.2.1",
     "@types/node-cron": "^3.0.11",
+    "cors": "^2.8.5",
     "dotenv": "^16.3.1",
+    "express": "^4.18.2",
     "form-data": "^4.0.0",
     "mysql2": "^3.15.3",
     "node-cron": "^4.2.1",
@@ -35,6 +39,8 @@
     "telegraf": "^4.15.6"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
     "@types/node": "^20.10.5",
     "@types/sqlite3": "^3.1.11",
     "@typescript-eslint/eslint-plugin": "^6.19.0",

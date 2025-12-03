@@ -17,6 +17,7 @@ import { GeminiClient, RateLimitError, ProhibitedContentError } from './gemini-c
 import { RateLimiter } from './rate-limiter';
 import { QueueManager } from './queue-manager';
 import { logger } from './logger';
+import { createWebAppServer } from './webapp-server';
 
 dotenv.config();
 validateConfig();
@@ -237,6 +238,10 @@ bot.start(async (ctx) => {
     [Markup.button.callback('⚙️ Настройки', 'settings'), Markup.button.callback('💎 Premium', 'premium')],
     [Markup.button.callback('📊 Статистика', 'stats'), Markup.button.callback('ℹ️ Информация', 'info')],
   ];
+
+  if (process.env.WEBAPP_URL) {
+    buttons.push([Markup.button.webApp('📱 Открыть приложение', process.env.WEBAPP_URL)]);
+  }
 
   if (config.telegramChannelUrl) {
     buttons.push([Markup.button.url('📢 Канал', config.telegramChannelUrl)]);
@@ -519,6 +524,10 @@ bot.action('menu', async (ctx) => {
     [Markup.button.callback('⚙️ Настройки', 'settings'), Markup.button.callback('💎 Premium', 'premium')],
     [Markup.button.callback('📊 Статистика', 'stats'), Markup.button.callback('ℹ️ Информация', 'info')],
   ];
+
+  if (process.env.WEBAPP_URL) {
+    buttons.push([Markup.button.webApp('📱 Открыть приложение', process.env.WEBAPP_URL)]);
+  }
 
   if (config.telegramChannelUrl) {
     buttons.push([Markup.button.url('📢 Канал', config.telegramChannelUrl)]);
@@ -1494,6 +1503,14 @@ cron.schedule('*/5 * * * *', checkQuota, {
 checkQuota();
 
 updateBotDescription();
+
+const webAppServer = createWebAppServer(bot, subscriptionManager, adminPanel);
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+webAppServer.listen(PORT, HOST, () => {
+  logger.info(`Web App сервер запущен на ${HOST}:${PORT}`);
+});
 
 bot.launch();
 
