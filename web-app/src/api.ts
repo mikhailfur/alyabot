@@ -1,4 +1,4 @@
-import { WebApp } from '@twa-dev/sdk';
+import WebApp from '@twa-dev/sdk';
 import { UserData, StatsData, SettingsUpdate } from './types';
 
 const API_BASE = '/api';

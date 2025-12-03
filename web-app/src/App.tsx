@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { init, WebApp } from '@twa-dev/sdk';
-import { UserData, StatsData } from './types';
+import WebApp from '@twa-dev/sdk';
+import { UserData } from './types';
 import { MainScreen } from './components/MainScreen';
 import { AdminPanel } from './components/AdminPanel';
 import { api } from './api';
@@ -11,7 +11,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    init();
     WebApp.ready();
     WebApp.expand();
 

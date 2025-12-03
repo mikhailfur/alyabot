@@ -30,8 +30,6 @@ export function MainScreen({ userData, onSettingsUpdate }: MainScreenProps) {
     return userData.firstName || userData.username || 'Пользователь';
   };
 
-  const currentMode = BEHAVIOR_MODES.find(m => m.value === userData.behavior_mode) || BEHAVIOR_MODES[0];
-
   return (
     <div className="max-w-md mx-auto p-4">
       <div className="bg-white rounded-lg shadow-md p-6 mb-4">
