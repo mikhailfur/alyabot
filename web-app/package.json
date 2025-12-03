@@ -10,7 +10,7 @@
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@twa-dev/sdk": "^1.0.0"
+    "@twa-dev/sdk": "^8.0.2"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
