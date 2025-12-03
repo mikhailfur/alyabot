@@ -55,10 +55,10 @@ function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-pink-100 via-purple-50 to-indigo-100">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Загрузка...</p>
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-pink-400 border-t-transparent mx-auto mb-4"></div>
+          <p className="text-purple-600 font-bold text-lg">Загрузка... ✨</p>
         </div>
       </div>
     );
@@ -66,14 +66,14 @@ function App() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-center p-6">
-          <p className="text-red-600 mb-4">{error}</p>
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-pink-100 via-purple-50 to-indigo-100">
+        <div className="text-center p-6 bg-white/80 backdrop-blur-lg rounded-3xl shadow-2xl border-2 border-pink-200/50">
+          <p className="text-red-500 mb-4 font-bold text-lg">😢 {error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+            className="px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white rounded-xl font-bold hover:shadow-lg transform hover:scale-105 transition-all"
           >
-            Обновить
+            Обновить ✨
           </button>
         </div>
       </div>
@@ -85,7 +85,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       {userData.isAdmin ? (
         <AdminPanel
           userData={userData}

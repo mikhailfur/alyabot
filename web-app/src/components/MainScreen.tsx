@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import WebApp from '@twa-dev/sdk';
 import { UserData } from '../types';
 
 interface MainScreenProps {
@@ -6,22 +8,22 @@ interface MainScreenProps {
 }
 
 const BEHAVIOR_MODES = [
-  { value: 'default', label: 'Обычный', emoji: '🔄' },
-  { value: 'study', label: 'Учёба', emoji: '📚' },
-  { value: 'work', label: 'Работа', emoji: '💼' },
-  { value: 'psychologist', label: 'Психолог', emoji: '🧠' },
-  { value: 'nsfw', label: 'NSFW', emoji: '🔥' },
+  { value: 'default', label: 'Обычный', emoji: '🌸', color: 'from-pink-400 to-purple-400' },
+  { value: 'study', label: 'Учёба', emoji: '📚', color: 'from-blue-400 to-cyan-400' },
+  { value: 'work', label: 'Работа', emoji: '💼', color: 'from-indigo-400 to-purple-400' },
+  { value: 'psychologist', label: 'Психолог', emoji: '🧠', color: 'from-purple-400 to-pink-400' },
+  { value: 'nsfw', label: 'NSFW', emoji: '🔥', color: 'from-red-400 to-orange-400' },
 ];
 
 export function MainScreen({ userData, onSettingsUpdate }: MainScreenProps) {
-  const formatDate = (timestamp?: number) => {
-    if (!timestamp) return 'Не указано';
-    return new Date(timestamp).toLocaleDateString('ru-RU', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const user = WebApp.initDataUnsafe?.user;
+    if (user?.photo_url) {
+      setAvatarUrl(user.photo_url);
+    }
+  }, []);
 
   const getDisplayName = () => {
     if (userData.firstName && userData.lastName) {
@@ -31,77 +33,89 @@ export function MainScreen({ userData, onSettingsUpdate }: MainScreenProps) {
   };
 
   return (
-    <div className="max-w-md mx-auto p-4">
-      <div className="bg-white rounded-lg shadow-md p-6 mb-4">
-        <div className="flex items-center space-x-4 mb-4">
-          <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-            {getDisplayName().charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <h1 className="text-xl font-bold">{getDisplayName()}</h1>
-            {userData.username && (
-              <p className="text-gray-500">@{userData.username}</p>
+    <div className="min-h-screen bg-gradient-to-br from-pink-100 via-purple-50 to-indigo-100">
+      <div className="max-w-md mx-auto p-4 pt-8">
+        <div className="bg-white/80 backdrop-blur-lg rounded-3xl shadow-2xl p-6 mb-6 border-2 border-pink-200/50">
+          <div className="flex items-center space-x-4 mb-6">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt="Avatar"
+                className="w-20 h-20 rounded-full border-4 border-pink-300 shadow-lg object-cover"
+              />
+            ) : (
+              <div className="w-20 h-20 bg-gradient-to-br from-pink-400 to-purple-500 rounded-full flex items-center justify-center text-white text-3xl font-bold shadow-lg border-4 border-pink-300">
+                {getDisplayName().charAt(0).toUpperCase()}
+              </div>
             )}
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-pink-500 to-purple-600 bg-clip-text text-transparent">
+                {getDisplayName()}
+              </h1>
+              {userData.username && (
+                <p className="text-purple-500 font-medium">@{userData.username}</p>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-            <span className="font-medium">Статус подписки</span>
-            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+          <div className="flex items-center justify-between p-4 bg-gradient-to-r from-yellow-100 to-pink-100 rounded-2xl border-2 border-yellow-200">
+            <span className="font-bold text-gray-800">Статус подписки</span>
+            <span className={`px-4 py-2 rounded-full text-sm font-bold shadow-md ${
               userData.isPremium
-                ? 'bg-yellow-100 text-yellow-800'
-                : 'bg-gray-100 text-gray-800'
+                ? 'bg-gradient-to-r from-yellow-400 to-orange-400 text-white'
+                : 'bg-gradient-to-r from-gray-300 to-gray-400 text-white'
             }`}>
               {userData.isPremium ? '⭐ Premium' : '💬 Free'}
             </span>
           </div>
+        </div>
 
-          {userData.isPremium && userData.subscriptionUntil && (
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600">Действует до</p>
-              <p className="font-medium">{formatDate(userData.subscriptionUntil)}</p>
-            </div>
+        <div className="bg-white/80 backdrop-blur-lg rounded-3xl shadow-2xl p-6 border-2 border-pink-200/50">
+          <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-pink-500 to-purple-600 bg-clip-text text-transparent text-center">
+            ✨ Режим поведения
+          </h2>
+          <div className="space-y-3">
+            {BEHAVIOR_MODES.map((mode) => {
+              const isSelected = userData.behavior_mode === mode.value;
+              const isDisabled = !userData.isPremium && mode.value !== 'default';
+              
+              return (
+                <button
+                  key={mode.value}
+                  onClick={() => onSettingsUpdate(mode.value)}
+                  disabled={isDisabled}
+                  className={`w-full p-4 rounded-2xl border-2 transition-all transform ${
+                    isSelected
+                      ? `bg-gradient-to-r ${mode.color} border-transparent text-white shadow-lg scale-105`
+                      : 'bg-white border-pink-200 hover:border-pink-300 hover:shadow-md'
+                  } ${
+                    isDisabled
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'cursor-pointer active:scale-95'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-3xl">{mode.emoji}</span>
+                      <span className={`font-bold text-lg ${isSelected ? 'text-white' : 'text-gray-800'}`}>
+                        {mode.label}
+                      </span>
+                    </div>
+                    {isSelected && (
+                      <span className="text-2xl">✨</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {!userData.isPremium && (
+            <p className="mt-6 text-sm text-center text-purple-600 font-medium bg-purple-50 p-3 rounded-xl border border-purple-200">
+              💎 Для изменения режима нужна Premium подписка
+            </p>
           )}
         </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-lg font-bold mb-4">Режим поведения</h2>
-        <div className="space-y-2">
-          {BEHAVIOR_MODES.map((mode) => (
-            <button
-              key={mode.value}
-              onClick={() => onSettingsUpdate(mode.value)}
-              disabled={!userData.isPremium && mode.value !== 'default'}
-              className={`w-full p-4 rounded-lg border-2 transition-all ${
-                userData.behavior_mode === mode.value
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300'
-              } ${
-                !userData.isPremium && mode.value !== 'default'
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'cursor-pointer'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <span className="text-2xl">{mode.emoji}</span>
-                  <span className="font-medium">{mode.label}</span>
-                </div>
-                {userData.behavior_mode === mode.value && (
-                  <span className="text-blue-500">✓</span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {!userData.isPremium && (
-          <p className="mt-4 text-sm text-gray-500 text-center">
-            Для изменения режима нужна Premium подписка
-          </p>
-        )}
       </div>
     </div>
   );
