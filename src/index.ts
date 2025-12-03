@@ -15,6 +15,7 @@ import { PremiumBroadcast } from './broadcast';
 import { GeminiBalancer } from './gemini-balancer';
 import { GeminiClient, RateLimitError, ProhibitedContentError } from './gemini-client';
 import { RateLimiter } from './rate-limiter';
+import { QueueManager } from './queue-manager';
 import { logger } from './logger';
 
 dotenv.config();
@@ -27,10 +28,11 @@ const geminiBalancer = new GeminiBalancer(config.geminiApiKeys, config.geminiApi
 const geminiClient = new GeminiClient(geminiBalancer);
 
 const subscriptionManager = new SubscriptionManager(bot);
-const adminPanel = new AdminPanel(bot);
+const adminPanel = new AdminPanel(bot, geminiBalancer);
 const voiceHandler = new VoiceHandler(bot, geminiClient);
 const premiumBroadcast = new PremiumBroadcast(bot, voiceHandler, geminiClient);
 const rateLimiter = new RateLimiter();
+const queueManager = new QueueManager(bot, geminiBalancer);
 
 async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Promise<void> {
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
@@ -66,7 +68,21 @@ async function sendRateLimitMessage(ctx: any, isApiLimit: boolean = false): Prom
   }
 }
 
-async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium: boolean): Promise<void> {
+async function sendProhibitedContentMessage(ctx: any, userId: number, isPremium: boolean, behaviorMode?: string): Promise<void> {
+  if (behaviorMode === 'nsfw') {
+    const message = `Ваш запрос нарушает условия использования сервиса.\n` +
+      `Аля не может общаться на подобные темы. Ведь она всего лишь хорошая девочка и не может знать о таких вещах.\n\n` +
+      `Пожалуйста, ознакомьтесь с нашими правилами:`;
+
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('📋 Условия использования', 'https://mikhailfur.ru/terms')],
+      ]),
+    });
+    return;
+  }
+
   const imagePath = path.join(__dirname, '..', 'src', 'images', 'ratelimit.jpg');
   let imageExists = false;
   try {
@@ -950,8 +966,10 @@ bot.on('photo', async (ctx) => {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   
-  try {
-    if (!userId || !chatId) return;
+  if (!userId || !chatId) return;
+
+  (async () => {
+    try {
 
 
     if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
@@ -997,10 +1015,15 @@ bot.on('photo', async (ctx) => {
 
     await ctx.sendChatAction('typing');
 
+    let voiceMessageCount = 0;
+    if (isPremium) {
+      voiceMessageCount = await database.getVoiceMessageCount(userId, 5);
+    }
+
     const chatHistory = await database.getChatHistory(userId, 10);
     const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, caption || 'Что на этом фото?');
     
-    const prompt = getBehaviorPrompt(behaviorMode);
+    const prompt = getBehaviorPrompt(behaviorMode, false, voiceMessageCount);
     const fullPrompt = `${prompt}\n\n${contextWithHistory}\n\nОписание фото: ${imageDescription}\n\nАля:`;
     
     let text: string;
@@ -1019,7 +1042,7 @@ bot.on('photo', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке фото:', error);
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
         return;
       }
       console.error('Ошибка при генерации ответа на фото через Gemini:', error);
@@ -1030,37 +1053,42 @@ bot.on('photo', async (ctx) => {
     if (voiceMatch && isPremium) {
       text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
       await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
+      await database.recordVoiceMessage(userId);
       if (text.trim()) {
         await ctx.reply(text.trim());
       }
     } else {
       if (voiceHandler.shouldSendVoice() && isPremium) {
         await voiceHandler.sendVoiceMessage(ctx, text);
+        await database.recordVoiceMessage(userId);
       } else {
         await ctx.reply(text);
       }
     }
 
-    await database.saveMessage(userId, ctx.from?.username, `[Фото] ${caption || ''}`, text, chatId, ctx.chat?.type);
-    await database.updateUserActivity(userId);
-  } catch (error) {
-    console.error('Ошибка при обработке фото:', error);
-    try {
-      if (userId && chatId) {
-        await ctx.reply('Ой, что-то пошло не так при обработке фото... 😅');
+      await database.saveMessage(userId, ctx.from?.username, `[Фото] ${caption || ''}`, text, chatId, ctx.chat?.type);
+      await database.updateUserActivity(userId);
+    } catch (error) {
+      console.error('Ошибка при обработке фото:', error);
+      try {
+        if (userId && chatId) {
+          await ctx.reply('Ой, что-то пошло не так при обработке фото... 😅');
+        }
+      } catch (replyError) {
+        console.error('Ошибка при отправке сообщения об ошибке:', replyError);
       }
-    } catch (replyError) {
-      console.error('Ошибка при отправке сообщения об ошибке:', replyError);
     }
-  }
+  })();
 });
 
 bot.on('voice', async (ctx) => {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   
-  try {
-    if (!userId || !chatId) return;
+  if (!userId || !chatId) return;
+
+  (async () => {
+    try {
 
     if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup') {
       return;
@@ -1110,7 +1138,7 @@ bot.on('voice', async (ctx) => {
       }
       if (error instanceof ProhibitedContentError) {
         console.error('Ошибка PROHIBITED_CONTENT от Gemini API при обработке голосового:', error);
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
+        await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
         return;
       }
       console.error('Ошибка при генерации ответа на голосовое через Gemini:', error);
@@ -1121,156 +1149,208 @@ bot.on('voice', async (ctx) => {
     if (voiceMatch) {
       text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
       await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
+      await database.recordVoiceMessage(userId);
       if (text.trim()) {
         await ctx.reply(text.trim());
       }
     } else {
       if (voiceHandler.shouldSendVoice()) {
         await voiceHandler.sendVoiceMessage(ctx, text);
+        await database.recordVoiceMessage(userId);
       } else {
         await ctx.reply(text);
       }
     }
 
-    await database.saveMessage(userId, ctx.from?.username, `[Голос] ${transcription}`, text, chatId, ctx.chat?.type);
-    await database.updateUserActivity(userId);
-  } catch (error) {
-    console.error('Ошибка при обработке голосового сообщения:', error);
-    try {
-      if (userId && chatId) {
-        await ctx.reply('Ой, что-то пошло не так при обработке голосового сообщения... 😅');
+      await database.saveMessage(userId, ctx.from?.username, `[Голос] ${transcription}`, text, chatId, ctx.chat?.type);
+      await database.updateUserActivity(userId);
+    } catch (error) {
+      console.error('Ошибка при обработке голосового сообщения:', error);
+      try {
+        if (userId && chatId) {
+          await ctx.reply('Ой, что-то пошло не так при обработке голосового сообщения... 😅');
+        }
+      } catch (replyError) {
+        console.error('Ошибка при отправке сообщения об ошибке:', replyError);
       }
-    } catch (replyError) {
-      console.error('Ошибка при отправке сообщения об ошибке:', replyError);
     }
-  }
+  })();
 });
 
 bot.on('text', async (ctx) => {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   
-  try {
-    const userMessage = ctx.message.text;
-    const username = ctx.from?.username || ctx.from?.first_name;
-    const chatType = ctx.chat?.type;
-    
-    if (!userId || !chatId) return;
+  if (!userId || !chatId) return;
 
-    if (userMessage?.startsWith('/')) {
-      return;
-    }
+  const userMessage = ctx.message.text;
+  if (userMessage?.startsWith('/')) {
+    return;
+  }
 
-    if (!shouldProcessMessage(userId)) return;
+  (async () => {
+    try {
+      const username = ctx.from?.username || ctx.from?.first_name;
+      const chatType = ctx.chat?.type;
 
-    await database.createOrUpdateUser(userId, username, ctx.from.first_name, ctx.from.last_name);
+      if (!shouldProcessMessage(userId)) return;
 
-    const isGroup = chatType === 'group' || chatType === 'supergroup';
-    let shouldRespond = false;
+      await database.createOrUpdateUser(userId, username, ctx.from.first_name, ctx.from.last_name);
 
-    if (isGroup) {
-      const settings = await database.getGroupSettings(chatId);
-      const isActive = settings?.isActive || false;
-      const mentionMode = settings?.mentionMode !== false;
-      
-      const botMentioned = userMessage.includes('@youralyasanbot') || userMessage.includes('@youralyasanbot');
-      const isReplyToBot = ctx.message.reply_to_message?.from?.id === ctx.botInfo?.id;
-      
-      if (isActive && !mentionMode) {
-        shouldRespond = true;
-      } else if (mentionMode && botMentioned) {
-        shouldRespond = true;
-      } else if (isReplyToBot) {
+      const isGroup = chatType === 'group' || chatType === 'supergroup';
+      let shouldRespond = false;
+
+      if (isGroup) {
+        const settings = await database.getGroupSettings(chatId);
+        const isActive = settings?.isActive || false;
+        const mentionMode = settings?.mentionMode !== false;
+        
+        const botMentioned = userMessage.includes('@youralyasanbot') || userMessage.includes('@youralyasanbot');
+        const isReplyToBot = ctx.message.reply_to_message?.from?.id === ctx.botInfo?.id;
+        
+        if (isActive && !mentionMode) {
+          shouldRespond = true;
+        } else if (mentionMode && botMentioned) {
+          shouldRespond = true;
+        } else if (isReplyToBot) {
+          shouldRespond = true;
+        }
+      } else {
         shouldRespond = true;
       }
-    } else {
-      shouldRespond = true;
-    }
 
-    if (!shouldRespond) return;
+      if (!shouldRespond) return;
 
-    const isPremium = await subscriptionManager.checkUserSubscription(userId);
-    
-    if (!isPremium && !isGroup) {
-      const limitCheck = rateLimiter.canSendMessage(userId);
-      if (!limitCheck.allowed) {
-        if (limitCheck.cooldownEnd) {
-          await sendRateLimitMessage(ctx, false);
-          return;
+      const isPremium = await subscriptionManager.checkUserSubscription(userId);
+      const shouldUseQueue = !isPremium && !isGroup;
+      
+      console.log(`[Queue] userId: ${userId}, isPremium: ${isPremium}, isGroup: ${isGroup}, shouldUseQueue: ${shouldUseQueue}`);
+      
+      if (!isPremium && !isGroup) {
+        const limitCheck = rateLimiter.canSendMessage(userId);
+        if (!limitCheck.allowed) {
+          if (limitCheck.cooldownEnd) {
+            await sendRateLimitMessage(ctx, false);
+            return;
+          }
         }
       }
-    }
 
-    await ctx.sendChatAction('typing');
-    const user = await database.getUser(userId);
-    const behaviorMode = user?.behavior_mode || 'default';
-
-    const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
-    const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
-    
-    const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode, !isGroup);
-    const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
-    
-    let text: string;
-    try {
-      text = await geminiClient.generateContent({
-        prompt: fullPrompt,
-        isPremium,
-        maxRetries: 3,
-        behaviorMode
-      });
-      
-      if (text.trim() === '[NSFW_BLOCKED]' || text.trim().includes('[NSFW_BLOCKED]')) {
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
-        return;
+      if (shouldUseQueue) {
+        if (queueManager.isUserInQueue(userId)) {
+          await ctx.reply('⏳ Ты уже в очереди! Дождись обработки текущего запроса.');
+          return;
+        }
+        
+        try {
+          await queueManager.addToQueue(userId, chatId);
+        } catch (error: any) {
+          if (error.message === 'Пользователь уже в очереди') {
+            await ctx.reply('⏳ Ты уже в очереди! Дождись обработки текущего запроса.');
+            return;
+          }
+          throw error;
+        }
+      } else {
+        console.log(`[Queue] Очередь не используется для userId: ${userId}`);
       }
-    } catch (error: any) {
+
+      await ctx.sendChatAction('typing');
+      const user = await database.getUser(userId);
+      const behaviorMode = user?.behavior_mode || 'default';
+
+      let voiceMessageCount = 0;
+      if (isPremium && !isGroup) {
+        voiceMessageCount = await database.getVoiceMessageCount(userId, 5);
+      }
+
+      const chatHistory = await database.getChatHistory(userId, 10, isGroup ? chatId : undefined);
+      const contextWithHistory = memoryManager.buildContextWithHistory(chatHistory, userMessage);
+      
+      const selectedPrompt = isGroup ? alyaPromptGroup : getBehaviorPrompt(behaviorMode, !isGroup, voiceMessageCount);
+      const fullPrompt = `${selectedPrompt}\n\n${contextWithHistory}\n\nАля:`;
+      
+      let text: string;
+      try {
+        text = await geminiClient.generateContent({
+          prompt: fullPrompt,
+          isPremium,
+          maxRetries: 3,
+          behaviorMode
+        });
+        
+        if (text.trim() === '[NSFW_BLOCKED]' || text.trim().includes('[NSFW_BLOCKED]')) {
+          await sendProhibitedContentMessage(ctx, userId, isPremium);
+          return;
+        }
+      } catch (error: any) {
       if (error instanceof RateLimitError) {
         console.error('Ошибка rate limit от Gemini API:', error);
+        if (!isPremium && !isGroup) {
+          const quota = geminiBalancer.getTotalFreeQuota();
+          if (quota.remaining <= 0) {
+            await ctx.reply('😴 *Аля устала!*\n\n' +
+              'Все FREE API ключи исчерпали дневной лимит запросов. ' +
+              'Приобрети Premium подписку, чтобы продолжить общение без ограничений! 💪', {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [Markup.button.callback('💎 Купить Premium', 'premium')],
+              ]),
+            });
+            return;
+          }
+        }
         await sendRateLimitMessage(ctx, true);
         return;
       }
-      if (error instanceof ProhibitedContentError) {
-        console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
-        await sendProhibitedContentMessage(ctx, userId, isPremium);
-        return;
+        if (error instanceof ProhibitedContentError) {
+          console.error('Ошибка PROHIBITED_CONTENT от Gemini API:', error);
+          await sendProhibitedContentMessage(ctx, userId, isPremium, behaviorMode);
+          return;
+        }
+        console.error('Ошибка при генерации ответа через Gemini:', error);
+        throw error;
       }
-      console.error('Ошибка при генерации ответа через Gemini:', error);
-      throw error;
-    }
 
-    const voiceMatch = text.match(/\[VOICE:\s*(.+?)\]/);
-    if (voiceMatch && isPremium) {
-      text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
-      await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
-      if (text.trim()) {
-        await ctx.reply(text.trim());
-      }
-    } else {
-      if (voiceHandler.shouldSendVoice() && isPremium) {
-        await voiceHandler.sendVoiceMessage(ctx, text);
+      const voiceMatch = text.match(/\[VOICE:\s*(.+?)\]/);
+      if (voiceMatch && isPremium) {
+        text = text.replace(/\[VOICE:\s*(.+?)\]/g, '');
+        await voiceHandler.sendVoiceMessage(ctx, voiceMatch[1].trim());
+        if (isPremium && !isGroup) {
+          await database.recordVoiceMessage(userId);
+        }
+        if (text.trim()) {
+          await ctx.reply(text.trim());
+        }
       } else {
-        await ctx.reply(text);
+        if (voiceHandler.shouldSendVoice() && isPremium) {
+          await voiceHandler.sendVoiceMessage(ctx, text);
+          if (isPremium && !isGroup) {
+            await database.recordVoiceMessage(userId);
+          }
+        } else {
+          await ctx.reply(text);
+        }
+      }
+      
+      await database.saveMessage(userId, username, userMessage, text, chatId, chatType);
+      await database.updateUserActivity(userId);
+      
+      if (!isPremium && !isGroup) {
+        rateLimiter.recordMessage(userId);
+      }
+      
+    } catch (error) {
+      console.error('Ошибка при генерации ответа:', error);
+      try {
+        if (userId && chatId) {
+          await ctx.reply('Ой, что-то пошло не так... 😅 Попробуй еще раз!');
+        }
+      } catch (replyError) {
+        console.error('Ошибка при отправке сообщения об ошибке:', replyError);
       }
     }
-    
-    await database.saveMessage(userId, username, userMessage, text, chatId, chatType);
-    await database.updateUserActivity(userId);
-    
-    if (!isPremium && !isGroup) {
-      rateLimiter.recordMessage(userId);
-    }
-    
-  } catch (error) {
-    console.error('Ошибка при генерации ответа:', error);
-    try {
-      if (userId && chatId) {
-        await ctx.reply('Ой, что-то пошло не так... 😅 Попробуй еще раз!');
-      }
-    } catch (replyError) {
-      console.error('Ошибка при отправке сообщения об ошибке:', replyError);
-    }
-  }
+  })();
 });
 
 bot.command('activate', async (ctx) => {
@@ -1361,40 +1441,15 @@ scheduleNextBroadcast();
 async function updateBotDescription(): Promise<void> {
   try {
     const activeUsers = await database.getActiveUsersCount(5);
-    
-    // Получаем количество ошибок 429, если таблица существует
-    let error429Count = 0;
-    try {
-      error429Count = await database.getApiErrorCount('gemini_429', 3);
-    } catch (error: any) {
-      // Если таблица еще не создана, просто используем 0
-      if (error.code === 'ER_NO_SUCH_TABLE') {
-        logger.debug('Таблица api_errors еще не создана, используем 0 ошибок');
-        error429Count = 0;
-      } else {
-        logger.warn('Ошибка при получении количества ошибок 429', error);
-      }
-    }
+    const freeQuota = geminiBalancer.getTotalFreeQuota();
     
     let loadStatus = '🟢';
     let loadText = 'Низкая';
     
-    // Определяем загруженность на основе количества пользователей
-    if (activeUsers >= 20) {
+    if (freeQuota.percentage >= 80) {
       loadStatus = '🔴';
       loadText = 'Повышенная';
-    } else if (activeUsers >= 10) {
-      loadStatus = '🟡';
-      loadText = 'Средняя';
-    }
-    
-    // Учитываем ошибки 429 от Gemini API за последние 3 часа
-    // Если более 8 ошибок - повышенная загруженность
-    // Если более 3 ошибок - средняя загруженность
-    if (error429Count >= 8) {
-      loadStatus = '🔴';
-      loadText = 'Повышенная';
-    } else if (error429Count > 3 && loadStatus !== '🔴') {
+    } else if (freeQuota.percentage >= 50) {
       loadStatus = '🟡';
       loadText = 'Средняя';
     }
@@ -1410,7 +1465,7 @@ async function updateBotDescription(): Promise<void> {
     
     await bot.telegram.setMyShortDescription(shortDescription);
     await bot.telegram.setMyDescription(fullDescription);
-    logger.debug('Описание бота обновлено', { activeUsers, error429Count, loadText });
+    logger.debug('Описание бота обновлено', { activeUsers, quotaPercentage: freeQuota.percentage, loadText });
   } catch (error) {
     logger.error('Ошибка при обновлении описания бота', error);
   }
@@ -1422,6 +1477,22 @@ cron.schedule('* * * * *', async () => {
   timezone: 'Europe/Moscow'
 });
 
+const checkQuota = async () => {
+  try {
+    await geminiBalancer.checkAllFreeTokensQuota();
+    const stats = geminiBalancer.getStats();
+    logger.info('Проверка лимитов FREE API ключей завершена', stats.freeQuota);
+  } catch (error) {
+    logger.error('Ошибка при проверке лимитов API ключей', error);
+  }
+};
+
+cron.schedule('*/5 * * * *', checkQuota, {
+  timezone: 'Europe/Moscow'
+});
+
+checkQuota();
+
 updateBotDescription();
 
 bot.launch();
@@ -1431,12 +1502,16 @@ logger.info('Бот Аля запущен! 🤖');
 process.once('SIGINT', async () => {
   logger.info('Завершение работы бота... (SIGINT)');
   subscriptionManager.stopPeriodicCheck();
+  queueManager.stop();
+  geminiBalancer.stop();
   await database.close();
   bot.stop('SIGINT');
 });
 process.once('SIGTERM', async () => {
   logger.info('Завершение работы бота... (SIGTERM)');
   subscriptionManager.stopPeriodicCheck();
+  queueManager.stop();
+  geminiBalancer.stop();
   await database.close();
   bot.stop('SIGTERM');
 });

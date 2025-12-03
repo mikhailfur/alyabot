@@ -1,13 +1,16 @@
 import { Telegraf, Markup } from 'telegraf';
 import { database } from './database';
 import { config } from './config';
+import { GeminiBalancer } from './gemini-balancer';
 
 export class AdminPanel {
   private bot: Telegraf;
   private sessions: Map<number, any> = new Map();
+  private balancer: GeminiBalancer | null = null;
 
-  constructor(bot: Telegraf) {
+  constructor(bot: Telegraf, balancer?: GeminiBalancer) {
     this.bot = bot;
+    this.balancer = balancer || null;
   }
 
   isAdmin(userId: number): boolean {
@@ -116,13 +119,24 @@ export class AdminPanel {
       return acc;
     }, {});
 
-    const message = `🔐 *Админ-панель*\n\n` +
+    let message = `🔐 *Админ-панель*\n\n` +
       `📊 *Статистика:*\n` +
       `👥 Всего пользователей: ${stats.total_users || 0}\n` +
       `⭐ Premium пользователей: ${stats.premium_users || 0}\n` +
       `🟢 Активных за 24ч: ${stats.active_users || 0}\n` +
-      `💬 Всего сообщений: ${stats.total_messages || 0}\n\n` +
-      `Выберите действие:`;
+      `💬 Всего сообщений: ${stats.total_messages || 0}\n`;
+
+    if (this.balancer) {
+      const quota = this.balancer.getTotalFreeQuota();
+      const percentage = quota.percentage.toFixed(1);
+      const statusEmoji = quota.percentage < 40 ? '🟢' : quota.percentage < 60 ? '🟡' : quota.percentage < 80 ? '🟠' : '🔴';
+      message += `\n📡 *FREE API лимиты:*\n` +
+        `${statusEmoji} Загруженность: ${percentage}%\n` +
+        `📊 Использовано: ${quota.used}/${quota.total}\n` +
+        `✅ Осталось: ${quota.remaining}\n`;
+    }
+
+    message += `\nВыберите действие:`;
 
     let modelInfo = `\n🤖 *Модели:*\n`;
     for (const [model, count] of Object.entries(modelStats)) {
@@ -323,7 +337,19 @@ export class AdminPanel {
     message += `👥 Всего пользователей: ${stats.total_users || 0}\n`;
     message += `⭐ Premium: ${stats.premium_users || 0}\n`;
     message += `🟢 Активных (24ч): ${stats.active_users || 0}\n`;
-    message += `💬 Всего сообщений: ${stats.total_messages || 0}\n\n`;
+    message += `💬 Всего сообщений: ${stats.total_messages || 0}\n`;
+
+    if (this.balancer) {
+      const quota = this.balancer.getTotalFreeQuota();
+      const percentage = quota.percentage.toFixed(1);
+      const statusEmoji = quota.percentage < 40 ? '🟢' : quota.percentage < 60 ? '🟡' : quota.percentage < 80 ? '🟠' : '🔴';
+      message += `\n📡 *FREE API лимиты:*\n` +
+        `${statusEmoji} Загруженность: ${percentage}%\n` +
+        `📊 Использовано: ${quota.used}/${quota.total}\n` +
+        `✅ Осталось: ${quota.remaining}\n`;
+    }
+
+    message += `\n`;
     message += `*Режимы поведения:*\n`;
     for (const [mode, count] of Object.entries(modes)) {
       message += `  ${mode}: ${count}\n`;
